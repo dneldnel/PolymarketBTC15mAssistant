@@ -21,6 +21,60 @@ It combines:
 npm install
 ```
 
+## Run from terminal (step-by-step)
+
+### 1) Clone the repository
+
+```bash
+git clone https://github.com/FrondEnt/PolymarketBTC15mAssistant.git
+```
+
+Then open a terminal in the project folder.
+
+### 2) Install dependencies
+
+```bash
+npm install
+```
+
+### 3) (Optional) Set environment variables
+
+You can run without extra config (defaults are included), but for more stable Chainlink fallback it’s recommended to set at least one Polygon RPC.
+
+#### Windows PowerShell (current terminal session)
+
+```powershell
+$env:POLYGON_RPC_URL = "https://polygon-rpc.com"
+$env:POLYGON_RPC_URLS = "https://polygon-rpc.com,https://rpc.ankr.com/polygon"
+$env:POLYGON_WSS_URLS = "wss://polygon-bor-rpc.publicnode.com"
+```
+
+Optional Polymarket settings:
+
+```powershell
+$env:POLYMARKET_AUTO_SELECT_LATEST = "true"
+# $env:POLYMARKET_SLUG = "btc-updown-15m-..."   # pin a specific market
+```
+
+#### Windows CMD (current terminal session)
+
+```cmd
+set POLYGON_RPC_URL=https://polygon-rpc.com
+set POLYGON_RPC_URLS=https://polygon-rpc.com,https://rpc.ankr.com/polygon
+set POLYGON_WSS_URLS=wss://polygon-bor-rpc.publicnode.com
+```
+
+Optional Polymarket settings:
+
+```cmd
+set POLYMARKET_AUTO_SELECT_LATEST=true
+REM set POLYMARKET_SLUG=btc-updown-15m-...
+```
+
+Notes:
+- These environment variables apply only to the current terminal window.
+- If you want permanent env vars, set them via Windows System Environment Variables or use a `.env` loader of your choice.
+
 ## Configuration
 
 This project reads configuration from environment variables.
@@ -54,6 +108,18 @@ WSS RPC (optional but recommended for more real-time fallback):
 ## Run
 
 ```bash
+npm start
+```
+
+### Stop
+
+Press `Ctrl + C` in the terminal.
+
+### Update to latest version
+
+```bash
+git pull
+npm install
 npm start
 ```
 
