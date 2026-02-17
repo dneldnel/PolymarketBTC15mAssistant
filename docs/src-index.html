@@ -1,0 +1,1243 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>src/index.js 函数说明文档</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b1020;
+        --panel: #111836;
+        --text: #e7e9f3;
+        --muted: #a8b0d6;
+        --border: rgba(255, 255, 255, 0.12);
+        --accent: #7aa2ff;
+        --good: #20c997;
+        --bad: #ff6b6b;
+        --warn: #ffd43b;
+        --code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f7f8fc;
+          --panel: #ffffff;
+          --text: #111827;
+          --muted: #4b5563;
+          --border: rgba(0, 0, 0, 0.12);
+          --accent: #2563eb;
+        }
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        background: linear-gradient(180deg, var(--bg), color-mix(in oklab, var(--bg), #000 8%));
+        color: var(--text);
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      code,
+      pre {
+        font-family: var(--code);
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 28px 18px 60px;
+      }
+      header {
+        display: grid;
+        gap: 10px;
+        padding: 18px;
+        border: 1px solid var(--border);
+        background: color-mix(in oklab, var(--panel), transparent 0%);
+        border-radius: 14px;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 24px;
+        letter-spacing: 0.2px;
+      }
+      header .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: color-mix(in oklab, var(--panel), transparent 0%);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 16px;
+        margin-top: 16px;
+      }
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      nav,
+      main > section {
+        border: 1px solid var(--border);
+        background: var(--panel);
+        border-radius: 14px;
+      }
+      nav {
+        padding: 14px 14px 12px;
+        position: sticky;
+        top: 12px;
+        align-self: start;
+      }
+      @media (max-width: 980px) {
+        nav {
+          position: static;
+        }
+      }
+      nav h2 {
+        font-size: 14px;
+        margin: 0 0 10px;
+        color: var(--muted);
+        letter-spacing: 0.2px;
+        text-transform: uppercase;
+      }
+      nav .toc {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 6px;
+      }
+      nav .toc a {
+        display: block;
+        padding: 7px 10px;
+        border-radius: 10px;
+        color: var(--text);
+        border: 1px solid transparent;
+      }
+      nav .toc a:hover {
+        border-color: var(--border);
+        background: color-mix(in oklab, var(--panel), #000 6%);
+        text-decoration: none;
+      }
+      main {
+        display: grid;
+        gap: 16px;
+      }
+      main > section {
+        padding: 18px;
+      }
+      main h2 {
+        margin: 0 0 10px;
+        font-size: 18px;
+      }
+      main h3 {
+        margin: 18px 0 8px;
+        font-size: 15px;
+      }
+      p {
+        margin: 10px 0;
+        color: color-mix(in oklab, var(--text), var(--muted) 18%);
+        line-height: 1.6;
+      }
+      ul {
+        margin: 8px 0 0;
+        padding-left: 18px;
+        color: color-mix(in oklab, var(--text), var(--muted) 18%);
+        line-height: 1.6;
+      }
+      .note {
+        margin: 10px 0 0;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--accent);
+        background: color-mix(in oklab, var(--panel), #000 6%);
+        border-radius: 12px;
+      }
+      .k {
+        font-family: var(--code);
+        font-size: 0.95em;
+        padding: 1px 6px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: color-mix(in oklab, var(--panel), #000 8%);
+      }
+      a.k {
+        color: inherit;
+        text-decoration: none;
+      }
+      a.k:hover {
+        border-color: color-mix(in oklab, var(--accent), var(--border) 50%);
+        background: color-mix(in oklab, var(--panel), var(--accent) 10%);
+      }
+      pre {
+        margin: 10px 0 0;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: auto;
+        background: color-mix(in oklab, var(--panel), #000 10%);
+      }
+      .hr {
+        height: 1px;
+        background: var(--border);
+        margin: 16px 0;
+      }
+      .searchRow {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+      .searchRow input {
+        flex: 1;
+        min-width: 220px;
+        padding: 9px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: color-mix(in oklab, var(--panel), #000 4%);
+        color: var(--text);
+        outline: none;
+      }
+      .pill {
+        font-size: 12px;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 4px 10px;
+      }
+      details.fn {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 10px 12px;
+        background: color-mix(in oklab, var(--panel), #000 3%);
+        margin-top: 10px;
+      }
+      details.fn > summary {
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: baseline;
+        list-style: none;
+      }
+      details.fn > summary::-webkit-details-marker {
+        display: none;
+      }
+      details.fn .name {
+        font-family: var(--code);
+        font-size: 13px;
+      }
+      details.fn .tag {
+        font-size: 12px;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 2px 8px;
+        white-space: nowrap;
+      }
+      .twoCol {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      @media (max-width: 860px) {
+        .twoCol {
+          grid-template-columns: 1fr;
+        }
+      }
+      .kvTable {
+        display: grid;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .kvRow {
+        display: grid;
+        grid-template-columns: 130px 1fr;
+        gap: 10px;
+      }
+      .kvRow .key {
+        color: var(--muted);
+      }
+      .flow {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: color-mix(in oklab, var(--panel), #000 6%);
+        overflow: hidden;
+      }
+      .legend {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+      .dot.in {
+        background: var(--accent);
+      }
+      .dot.proc {
+        background: var(--good);
+      }
+      .dot.out {
+        background: var(--warn);
+      }
+      .dot.side {
+        background: var(--bad);
+      }
+      footer {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>src/index.js 函数说明文档</h1>
+        <div class="meta">
+          <span class="badge">入口文件：<span class="k">src/index.js</span></span>
+          <span class="badge">运行方式：<span class="k">npm run start</span>（等价于 <span class="k">node src/index.js</span>）</span>
+          <span class="badge">生成时间：2026-02-17</span>
+        </div>
+        <p>
+          该脚本是一个“BTC 15m 结算市场”辅助终端面板：并行拉取/订阅 Binance、Chainlink、Polymarket 数据，计算指标与方向概率，评估相对市场价格的
+          <span class="k">edge</span>，给出“是否入场/方向”的建议，同时在终端渲染仪表盘并写入日志。
+        </p>
+        <div class="note">
+          <b>重要副作用</b>：模块加载时会执行 <a class="k" href="#ext-applyGlobalProxyFromEnv">applyGlobalProxyFromEnv()</a>；随后调用
+          <a class="k" href="#fn-main">main()</a> 进入无限循环。脚本启动后会持续占用终端并每 <span class="k">CONFIG.pollIntervalMs</span> 写入
+          <span class="k">./logs/signals.csv</span>。若 <a class="k" href="#state-priceToBeatState">priceToBeat</a> 尚未锁定，会将市场 JSON dump 到
+          <span class="k">./logs/polymarket_market_*.json</span>（每个 market 仅一次）。
+        </div>
+      </header>
+
+      <div class="grid">
+        <nav>
+          <h2>目录</h2>
+          <ul class="toc">
+            <li><a href="#overview">概览</a></li>
+            <li><a href="#flow">主流程与流程图</a></li>
+            <li><a href="#state">关键状态与输出</a></li>
+            <li><a href="#functions">函数参考</a></li>
+          </ul>
+        </nav>
+
+        <main>
+	          <section id="overview">
+	            <h2>概览</h2>
+	            <div class="twoCol">
+	              <div>
+	                <h3>数据输入（外部模块）</h3>
+	                <ul>
+	                  <li>
+	                    Binance：<a class="k" href="#ext-fetchKlines">fetchKlines()</a> / <a class="k" href="#ext-fetchLastPrice">fetchLastPrice()</a> +
+	                    <a class="k" href="#ext-startBinanceTradeStream">startBinanceTradeStream()</a>
+	                  </li>
+	                  <li>
+	                    Chainlink：<a class="k" href="#ext-fetchChainlinkBtcUsd">fetchChainlinkBtcUsd()</a> +
+	                    <a class="k" href="#ext-startChainlinkPriceStream">startChainlinkPriceStream()</a>
+	                  </li>
+	                  <li>
+	                    Polymarket：市场查询/盘口/买价（<span class="k">./data/polymarket.js</span>），以及链上价格流（<a class="k" href="#ext-startPolymarketChainlinkPriceStream">startPolymarketChainlinkPriceStream()</a>）
+	                  </li>
+	                </ul>
+	                <h3>指标与决策（外部模块）</h3>
+	                <ul>
+	                  <li>指标：<span class="k">VWAP</span> / <span class="k">RSI</span> / <span class="k">MACD</span> / <span class="k">Heiken Ashi</span></li>
+	                  <li>
+	                    引擎：<a class="k" href="#ext-detectRegime">detectRegime()</a>（市场状态）→ <a class="k" href="#ext-scoreDirection">scoreDirection()</a>（方向评分）→
+	                    <a class="k" href="#ext-applyTimeAwareness">applyTimeAwareness()</a>（随剩余时间校正）
+	                  </li>
+	                  <li>
+	                    交易建议：<a class="k" href="#ext-computeEdge">computeEdge()</a>（模型 vs 市场）→ <a class="k" href="#ext-decide">decide()</a>（入场/方向/阶段/强度）
+	                  </li>
+	                </ul>
+	              </div>
+	              <div>
+	                <h3>输出</h3>
+	                <ul>
+	                  <li>终端 UI：持续刷新（<a class="k" href="#fn-renderScreen">renderScreen()</a> + ANSI 颜色）</li>
+	                  <li>CSV：<span class="k">./logs/signals.csv</span>（每个轮询周期追加一行）</li>
+	                  <li>调试 dump：当 <a class="k" href="#state-priceToBeatState">priceToBeat</a> 未锁定时，dump 一份市场原始 JSON 到 <span class="k">./logs</span></li>
+	                </ul>
+	                <h3>容错</h3>
+	                <ul>
+	                  <li>主循环每次迭代包裹在 <span class="k">try/catch</span>；错误会打印到控制台后继续下一轮。</li>
+	                  <li>Polymarket CLOB/OrderBook 拉取失败时，会回退到 market 字段（如 <span class="k">bestBid/bestAsk/spread</span>）。</li>
+	                  <li>Chainlink 价格优先使用 WebSocket（Polymarket→Chainlink→HTTP）。</li>
+	                </ul>
+	              </div>
+	            </div>
+
+	            <h3>Price-to-Beat（如何从 WebSocket 获得并锁定）</h3>
+	            <p>
+	              脚本并不是“直接从市场题面解析 price to beat”，而是在每个新 market 的 <span class="k">eventStartTime</span> 到达后，把当时的“链上现价”
+	              锁定为本轮的 <a class="k" href="#state-priceToBeatState">priceToBeat</a>（见 <a class="k" href="#fn-main">main()</a> 中的 <span class="k">priceToBeatState</span> 逻辑）。
+	            </p>
+	            <ul>
+	              <li>
+	                启动 WS：<a class="k" href="#ext-startPolymarketChainlinkPriceStream">startPolymarketChainlinkPriceStream()</a> 与
+	                <a class="k" href="#ext-startChainlinkPriceStream">startChainlinkPriceStream()</a> 持续更新“最新价格 tick”（通过各自的 <span class="k">getLast</span> 方法暴露）。
+	              </li>
+	              <li>
+	                每轮优先级：若 Polymarket WS 有价则用它；否则用 Chainlink WS；都没有才回退到 HTTP <a class="k" href="#ext-fetchChainlinkBtcUsd">fetchChainlinkBtcUsd()</a>。
+	              </li>
+	              <li>
+	                锁定时机：当 <span class="k">now &gt;= eventStartTime</span> 且该 market 还未锁定时，将当前链上现价写入 <span class="k">priceToBeatState.value</span>，并用于 UI 中
+	                “CURRENT PRICE vs PRICE TO BEAT” 的差值展示。
+	              </li>
+	            </ul>
+	            <div class="note">
+	              文件中仍保留了题面解析/结构探测工具：<a class="k" href="#fn-parsePriceToBeat">parsePriceToBeat()</a>、
+	              <a class="k" href="#fn-extractNumericFromMarket">extractNumericFromMarket()</a>、
+	              <a class="k" href="#fn-priceToBeatFromPolymarketMarket">priceToBeatFromPolymarketMarket()</a>，但当前主流程未使用它们来决定
+	              <a class="k" href="#state-priceToBeatState">priceToBeat</a>。
+	            </div>
+
+	            <h3>如何过渡到新的活跃预测市场（Market Rollover）</h3>
+	            <p>
+	              当未固定指定 <span class="k">CONFIG.polymarket.marketSlug</span> 且启用 <span class="k">autoSelectLatest</span> 时，脚本会在
+	              <a class="k" href="#fn-fetchPolymarketSnapshot">fetchPolymarketSnapshot()</a> 内调用
+	              <a class="k" href="#fn-resolveCurrentBtc15mMarket">resolveCurrentBtc15mMarket()</a> 自动选择“最新 live market”，并做短期缓存。
+	            </p>
+	            <ul>
+	              <li>
+	                获取 live events：<a class="k" href="#ext-fetchLiveEventsBySeriesId">fetchLiveEventsBySeriesId()</a> →
+	                展平 markets：<a class="k" href="#ext-flattenEventMarkets">flattenEventMarkets()</a> →
+	                选最新：<a class="k" href="#ext-pickLatestLiveMarket">pickLatestLiveMarket()</a>。
+	              </li>
+	              <li>
+	                market 切换检测：<a class="k" href="#fn-main">main()</a> 里对比 <span class="k">marketSlug</span>，若变化则重置 <span class="k">priceToBeatState</span>，等待新 market 到达
+	                <span class="k">eventStartTime</span> 后重新锁定。
+	              </li>
+	            </ul>
+	          </section>
+
+	          <section id="flow">
+	            <h2>主流程与流程图</h2>
+	            <p>
+	              入口逻辑：模块加载 → <a class="k" href="#ext-applyGlobalProxyFromEnv">applyGlobalProxyFromEnv()</a> → 运行 <a class="k" href="#fn-main">main()</a> →
+	              启动 3 个 WebSocket 流 → 无限循环按
+	              <span class="k">CONFIG.pollIntervalMs</span> 拉取/计算/渲染/落盘。
+	            </p>
+
+            <div class="flow" role="img" aria-label="主流程流程图（离线 SVG）">
+              <svg viewBox="0 0 980 640" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L10,3 L0,6 Z" fill="currentColor" />
+                  </marker>
+                  <style>
+                    .box { fill: rgba(255,255,255,0.03); stroke: rgba(255,255,255,0.16); stroke-width: 1.2; rx: 12; ry: 12; }
+                    .title { font: 600 13px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; fill: currentColor; }
+                    .sub { font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; fill: rgba(255,255,255,0.72); }
+                    .arrow { stroke: currentColor; stroke-width: 1.4; fill: none; marker-end: url(#arrow); opacity: 0.9; }
+                    .laneIn { color: #7aa2ff; }
+                    .laneProc { color: #20c997; }
+                    .laneOut { color: #ffd43b; }
+                    .laneSide { color: #ff6b6b; }
+                    @media (prefers-color-scheme: light) {
+                      .box { fill: rgba(0,0,0,0.02); stroke: rgba(0,0,0,0.14); }
+                      .sub { fill: rgba(0,0,0,0.64); }
+                    }
+                  </style>
+                </defs>
+
+	                <!-- Startup -->
+	                <g class="laneProc">
+	                  <rect class="box" x="40" y="28" width="380" height="72" />
+	                  <text class="title" x="58" y="56">Startup</text>
+	                  <text class="sub" x="58" y="78">Load env proxy; enter main loop</text>
+	                </g>
+
+                <!-- Streams -->
+                <g class="laneIn">
+                  <rect class="box" x="460" y="28" width="480" height="72" />
+                  <text class="title" x="478" y="56">WebSocket Streams</text>
+                  <text class="sub" x="478" y="78">Binance trades / Polymarket price / Chainlink price</text>
+                </g>
+
+                <path class="arrow laneProc" d="M420 64 L460 64" />
+
+                <!-- Loop -->
+                <g class="laneProc">
+                  <rect class="box" x="40" y="132" width="900" height="84" />
+                  <text class="title" x="58" y="160">Loop (while true)</text>
+                  <text class="sub" x="58" y="182">Compute candle window + read latest WS ticks + pick price source</text>
+                </g>
+
+                <path class="arrow laneIn" d="M700 100 L700 132" />
+                <path class="arrow laneProc" d="M230 100 L230 132" />
+
+                <!-- Parallel fetch -->
+	                <g class="laneIn">
+	                  <rect class="box" x="40" y="244" width="900" height="86" />
+	                  <text class="title" x="58" y="272">并行获取 (Promise.all)</text>
+	                  <text class="sub" x="58" y="294">klines(1m/5m), lastPrice, chainlink price, Polymarket snapshot</text>
+	                </g>
+                <path class="arrow laneProc" d="M490 216 L490 244" />
+
+                <!-- Compute -->
+                <g class="laneProc">
+                  <rect class="box" x="40" y="356" width="560" height="130" />
+                  <text class="title" x="58" y="384">计算与决策</text>
+                  <text class="sub" x="58" y="406">VWAP/RSI/MACD/Heiken Ashi 等指标</text>
+                  <text class="sub" x="58" y="428">Regime detection → direction scoring → time adjustment</text>
+                  <text class="sub" x="58" y="450">Edge compute → trading decision (ENTER/NO_TRADE)</text>
+                  <text class="sub" x="58" y="472">锁定 Price-to-Beat（market start 时刻）并计算差值</text>
+                </g>
+                <path class="arrow laneIn" d="M320 330 L320 356" />
+
+                <!-- Output -->
+                <g class="laneOut">
+                  <rect class="box" x="626" y="356" width="314" height="84" />
+                  <text class="title" x="644" y="384">终端输出</text>
+                  <text class="sub" x="644" y="406">renderScreen() + ANSI</text>
+                </g>
+                <path class="arrow laneProc" d="M600 402 L626 402" />
+
+                <g class="laneOut">
+                  <rect class="box" x="626" y="456" width="314" height="84" />
+                  <text class="title" x="644" y="484">日志落盘</text>
+                  <text class="sub" x="644" y="506">Append one CSV row (./logs/signals.csv)</text>
+                </g>
+                <path class="arrow laneOut" d="M783 440 L783 456" />
+
+                <!-- Error handling -->
+                <g class="laneSide">
+                  <rect class="box" x="40" y="556" width="560" height="64" />
+                  <text class="title" x="58" y="584">异常处理</text>
+                  <text class="sub" x="58" y="606">try/catch：打印错误后继续下一轮（不中止进程）</text>
+                </g>
+
+                <path class="arrow laneSide" d="M560 330 L560 556" opacity="0.55" />
+
+                <!-- Sleep & repeat -->
+                <g class="laneProc">
+                  <rect class="box" x="626" y="556" width="314" height="64" />
+                  <text class="title" x="644" y="584">Sleep</text>
+                  <text class="sub" x="644" y="606">Wait pollIntervalMs; repeat</text>
+                </g>
+                <path class="arrow laneOut" d="M783 540 L783 556" />
+                <path class="arrow laneProc" d="M783 556 L783 216" opacity="0.8" />
+              </svg>
+            </div>
+            <div class="legend">
+              <span><span class="dot in"></span>输入</span>
+              <span><span class="dot proc"></span>处理/决策</span>
+              <span><span class="dot out"></span>输出</span>
+              <span><span class="dot side"></span>异常/回退（见正文说明）</span>
+            </div>
+
+	            <div class="note">
+	              <b>关于“Price to Beat”</b>：该脚本会在每个 market 的 <span class="k">eventStartTime</span> 到达后，将当时的 Chainlink（或 WS）
+	              价格“锁定”为 <span class="k">priceToBeat</span>（<a class="k" href="#state-priceToBeatState">priceToBeatState</a>）。它是一个用于展示与比较的基线，而不是从市场题面解析出来的阈值。
+	            </div>
+          </section>
+
+          <section id="state">
+            <h2>关键状态与输出</h2>
+            <h3>状态变量</h3>
+            <div class="kvTable">
+              <div class="kvRow">
+                <div class="key"><span class="k">marketCache</span></div>
+                <div>当启用自动选取最新 market 时，缓存最近一次选中的 market，避免每轮都请求 events/markets。</div>
+              </div>
+	              <div class="kvRow" id="state-priceToBeatState">
+	                <div class="key"><span class="k">priceToBeatState</span></div>
+	                <div>记录当前 market slug 与被锁定的基准价格（以及锁定时间）。slug 变化时会重置。</div>
+	              </div>
+              <div class="kvRow">
+                <div class="key"><span class="k">prevSpotPrice</span></div>
+                <div>用于 UI：对比上一轮价格，显示颜色/箭头。</div>
+              </div>
+              <div class="kvRow">
+                <div class="key"><span class="k">dumpedMarkets</span></div>
+                <div>避免重复 dump 同一 market JSON。</div>
+              </div>
+            </div>
+
+            <h3>文件输出</h3>
+            <ul>
+              <li><span class="k">./logs/signals.csv</span>：每轮追加一行（时间戳、regime、模型概率、市场价格、edge、推荐动作等）。</li>
+              <li><span class="k">./logs/polymarket_market_&lt;slug&gt;.json</span>：当未能锁定 <span class="k">priceToBeat</span> 时，为调试保存 market 原始结构（每个 market 一次）。</li>
+            </ul>
+          </section>
+
+	          <section id="functions">
+	            <h2>函数参考</h2>
+	            <p>可用搜索框按函数名/关键词过滤（离线可用）。</p>
+	            <div class="searchRow">
+	              <input id="fnSearch" type="search" placeholder="搜索：countVwapCrosses / Polymarket / ANSI / vwap ..." />
+	              <span class="pill" id="fnCount">0</span>
+	            </div>
+
+	            <h3>外部依赖（import functions）</h3>
+	            <p>
+	              下面这些函数并不定义在 <span class="k">src/index.js</span> 内，但会被主流程 <a class="k" href="#fn-main">main()</a> 或
+	              <a class="k" href="#fn-fetchPolymarketSnapshot">fetchPolymarketSnapshot()</a> 调用。这里的说明聚焦于“它们在该脚本中的用途”。
+	            </p>
+
+	            <details class="fn" id="ext-applyGlobalProxyFromEnv" data-name="applyglobalproxyfromenv proxy env net">
+	              <summary>
+	                <span class="name">applyGlobalProxyFromEnv()</span>
+	                <span class="tag">External · ./net/proxy.js</span>
+	              </summary>
+	              <pre><code>function applyGlobalProxyFromEnv(): void</code></pre>
+	              <p>从环境变量读取代理配置，并对全局网络请求（HTTP/WebSocket）应用代理设置。该函数在模块加载阶段立即执行。</p>
+	              <div class="kvTable">
+	                <div class="kvRow"><div class="key">调用位置</div><div><span class="k">src/index.js</span> 顶层（非 main 内）。</div></div>
+	              </div>
+	            </details>
+
+	            <details class="fn" id="ext-startBinanceTradeStream" data-name="startbinancetradestream binance ws stream trade">
+	              <summary>
+	                <span class="name">startBinanceTradeStream({ symbol })</span>
+	                <span class="tag">External · ./data/binanceWs.js</span>
+	              </summary>
+	              <pre><code>function startBinanceTradeStream({ symbol }): streamHandle</code></pre>
+	              <p>启动 Binance trade WebSocket 流，并提供 <span class="k">getLast</span> 读取“最近一笔”价格 tick，用于更低延迟的 spotPrice 展示。</p>
+	            </details>
+
+	            <details class="fn" id="ext-startChainlinkPriceStream" data-name="startchainlinkpricestream chainlink ws stream">
+	              <summary>
+	                <span class="name">startChainlinkPriceStream({ ... })</span>
+	                <span class="tag">External · ./data/chainlinkWs.js</span>
+	              </summary>
+	              <pre><code>function startChainlinkPriceStream(...): streamHandle</code></pre>
+	              <p>启动 Chainlink 价格 WebSocket 流，供主循环优先读取链上现价（当 Polymarket WS 不可用时）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-startPolymarketChainlinkPriceStream" data-name="startpolymarketchainlinkpricestream polymarket ws price">
+	              <summary>
+	                <span class="name">startPolymarketChainlinkPriceStream({ ... })</span>
+	                <span class="tag">External · ./data/polymarketLiveWs.js</span>
+	              </summary>
+	              <pre><code>function startPolymarketChainlinkPriceStream(...): streamHandle</code></pre>
+	              <p>启动 Polymarket 侧的“Chainlink 价格”实时流（WebSocket）。在主循环中它拥有最高优先级，用于降低延迟并更贴近 Polymarket 实时数据源。</p>
+	            </details>
+
+	            <details class="fn" id="ext-fetchChainlinkBtcUsd" data-name="fetchchainlinkbtcusd chainlink http fallback">
+	              <summary>
+	                <span class="name">fetchChainlinkBtcUsd()</span>
+	                <span class="tag">External · ./data/chainlink.js</span>
+	              </summary>
+	              <pre><code>async function fetchChainlinkBtcUsd(): Promise&lt;{ price: number, updatedAt?: any, source?: string }&gt;</code></pre>
+	              <p>通过 HTTP 拉取 Chainlink BTC/USD 现价（作为 WS 不可用时的回退数据源）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-fetchKlines" data-name="fetchklines binance candles 1m 5m">
+	              <summary>
+	                <span class="name">fetchKlines({ interval, limit })</span>
+	                <span class="tag">External · ./data/binance.js</span>
+	              </summary>
+	              <pre><code>async function fetchKlines({ interval, limit }): Promise&lt;Array&lt;{ open, high, low, close, volume, ... }&gt;&gt;</code></pre>
+	              <p>拉取 Binance K 线数据，用于计算 VWAP/RSI/MACD/Heiken Ashi 等指标（主循环每轮请求 1m 与 5m）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-fetchLastPrice" data-name="fetchlastprice binance last price">
+	              <summary>
+	                <span class="name">fetchLastPrice()</span>
+	                <span class="tag">External · ./data/binance.js</span>
+	              </summary>
+	              <pre><code>async function fetchLastPrice(): Promise&lt;number&gt;</code></pre>
+	              <p>拉取 Binance 最新成交价（HTTP）。当 Binance WS 没有 tick 时，用它回退计算/展示 spotPrice。</p>
+	            </details>
+
+	            <details class="fn" id="ext-fetchMarketBySlug" data-name="fetchmarketbyslug polymarket market">
+	              <summary>
+	                <span class="name">fetchMarketBySlug(slug)</span>
+	                <span class="tag">External · ./data/polymarket.js</span>
+	              </summary>
+	              <pre><code>async function fetchMarketBySlug(slug): Promise&lt;object&gt;</code></pre>
+	              <p>按 slug 获取某个 Polymarket market 详情（当配置固定 marketSlug 时使用）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-fetchLiveEventsBySeriesId" data-name="fetchliveeventsbyseriesid polymarket series live events">
+	              <summary>
+	                <span class="name">fetchLiveEventsBySeriesId({ seriesId, limit })</span>
+	                <span class="tag">External · ./data/polymarket.js</span>
+	              </summary>
+	              <pre><code>async function fetchLiveEventsBySeriesId({ seriesId, limit }): Promise&lt;Array&lt;object&gt;&gt;</code></pre>
+	              <p>按 seriesId 获取当前“live events”列表，供自动选取最新 BTC 15m market 使用。</p>
+	            </details>
+
+	            <details class="fn" id="ext-flattenEventMarkets" data-name="flatteneventmarkets polymarket flatten markets">
+	              <summary>
+	                <span class="name">flattenEventMarkets(events)</span>
+	                <span class="tag">External · ./data/polymarket.js</span>
+	              </summary>
+	              <pre><code>function flattenEventMarkets(events): Array&lt;object&gt;</code></pre>
+	              <p>将 event 列表中的 markets 扁平化为单个 markets 数组，便于后续筛选。</p>
+	            </details>
+
+	            <details class="fn" id="ext-pickLatestLiveMarket" data-name="picklatestlivemarket polymarket latest">
+	              <summary>
+	                <span class="name">pickLatestLiveMarket(markets)</span>
+	                <span class="tag">External · ./data/polymarket.js</span>
+	              </summary>
+	              <pre><code>function pickLatestLiveMarket(markets): object | null</code></pre>
+	              <p>从候选 markets 中选出“最新的 live market”（脚本用于自动 market rollover）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-fetchClobPrice" data-name="fetchclobprice polymarket clob price buy">
+	              <summary>
+	                <span class="name">fetchClobPrice({ tokenId, side })</span>
+	                <span class="tag">External · ./data/polymarket.js</span>
+	              </summary>
+	              <pre><code>async function fetchClobPrice({ tokenId, side }): Promise&lt;number | null&gt;</code></pre>
+	              <p>从 Polymarket CLOB 获取某个 token 的指定方向价格（脚本用它获取 UP/DOWN 的 buy 价）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-fetchOrderBook" data-name="fetchorderbook polymarket clob order book">
+	              <summary>
+	                <span class="name">fetchOrderBook({ tokenId })</span>
+	                <span class="tag">External · ./data/polymarket.js</span>
+	              </summary>
+	              <pre><code>async function fetchOrderBook({ tokenId }): Promise&lt;object&gt;</code></pre>
+	              <p>从 Polymarket CLOB 获取订单簿，用于估算点差与流动性。</p>
+	            </details>
+
+	            <details class="fn" id="ext-summarizeOrderBook" data-name="summarizeorderbook spread liquidity">
+	              <summary>
+	                <span class="name">summarizeOrderBook(orderBook)</span>
+	                <span class="tag">External · ./data/polymarket.js</span>
+	              </summary>
+	              <pre><code>function summarizeOrderBook(orderBook): { bestBid, bestAsk, spread, bidLiquidity, askLiquidity }</code></pre>
+	              <p>把订单簿压缩成“最佳买/卖、点差、买卖侧流动性”等摘要字段，方便 UI 展示与 edge 计算。</p>
+	            </details>
+
+	            <details class="fn" id="ext-computeSessionVwap" data-name="computesessionvwap vwap">
+	              <summary>
+	                <span class="name">computeSessionVwap(candles)</span>
+	                <span class="tag">External · ./indicators/vwap.js</span>
+	              </summary>
+	              <pre><code>function computeSessionVwap(candles): number | null</code></pre>
+	              <p>计算某个 session 的 VWAP。当前在 <span class="k">src/index.js</span> 中计算了该值但未用于后续逻辑（保留为扩展点）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-computeVwapSeries" data-name="computevwapseries vwap series">
+	              <summary>
+	                <span class="name">computeVwapSeries(candles)</span>
+	                <span class="tag">External · ./indicators/vwap.js</span>
+	              </summary>
+	              <pre><code>function computeVwapSeries(candles): number[]</code></pre>
+	              <p>生成与 K 线对齐的 VWAP 序列，供斜率、距离、穿越次数等统计使用。</p>
+	            </details>
+
+	            <details class="fn" id="ext-computeRsi" data-name="computersi rsi">
+	              <summary>
+	                <span class="name">computeRsi(closes, period)</span>
+	                <span class="tag">External · ./indicators/rsi.js</span>
+	              </summary>
+	              <pre><code>function computeRsi(closes, period): number | null</code></pre>
+	              <p>计算 RSI（相对强弱指标）。脚本用它得到当前 RSI 值，并构造 RSI 序列用于斜率估计。</p>
+	            </details>
+
+	            <details class="fn" id="ext-sma" data-name="sma moving average rsi ma">
+	              <summary>
+	                <span class="name">sma(values, period)</span>
+	                <span class="tag">External · ./indicators/rsi.js</span>
+	              </summary>
+	              <pre><code>function sma(values, period): number | null</code></pre>
+	              <p>简单移动平均。脚本用它计算 RSI MA（当前该值未进入 UI/决策，可能用于后续扩展）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-slopeLast" data-name="slopelast slope">
+	              <summary>
+	                <span class="name">slopeLast(values, lookback)</span>
+	                <span class="tag">External · ./indicators/rsi.js</span>
+	              </summary>
+	              <pre><code>function slopeLast(values, lookback): number | null</code></pre>
+	              <p>估算序列尾部的斜率。脚本用它计算 RSI 的短期斜率，用于叙事上色与打分。</p>
+	            </details>
+
+	            <details class="fn" id="ext-computeMacd" data-name="computemacd macd">
+	              <summary>
+	                <span class="name">computeMacd(closes, fast, slow, signal)</span>
+	                <span class="tag">External · ./indicators/macd.js</span>
+	              </summary>
+	              <pre><code>function computeMacd(closes, fast, slow, signal): { hist, histDelta?, ... } | null</code></pre>
+	              <p>计算 MACD（含直方图 hist）。脚本用 hist 与 histDelta 生成 bullish/bearish 标签并参与方向打分。</p>
+	            </details>
+
+	            <details class="fn" id="ext-computeHeikenAshi" data-name="computeheikenashi heiken ashi">
+	              <summary>
+	                <span class="name">computeHeikenAshi(candles)</span>
+	                <span class="tag">External · ./indicators/heikenAshi.js</span>
+	              </summary>
+	              <pre><code>function computeHeikenAshi(candles): Array&lt;object&gt;</code></pre>
+	              <p>将普通 K 线转换为 Heiken Ashi 序列，用于更平滑地判断趋势颜色。</p>
+	            </details>
+
+	            <details class="fn" id="ext-countConsecutive" data-name="countconsecutive heiken consecutive">
+	              <summary>
+	                <span class="name">countConsecutive(heikenAshiSeries)</span>
+	                <span class="tag">External · ./indicators/heikenAshi.js</span>
+	              </summary>
+	              <pre><code>function countConsecutive(series): { color: string | null, count: number }</code></pre>
+	              <p>统计最近连续同色 Heiken Ashi 根数，输出颜色与连贯计数，供叙事与打分使用。</p>
+	            </details>
+
+	            <details class="fn" id="ext-detectRegime" data-name="detectregime regime">
+	              <summary>
+	                <span class="name">detectRegime({ price, vwap, vwapSlope, vwapCrossCount, volumeRecent, volumeAvg })</span>
+	                <span class="tag">External · ./engines/regime.js</span>
+	              </summary>
+	              <pre><code>function detectRegime(input): { regime: string, ... }</code></pre>
+	              <p>基于 VWAP 与成交量等特征判断当前市场状态（regime），用于日志输出与策略解释。</p>
+	            </details>
+
+	            <details class="fn" id="ext-scoreDirection" data-name="scoredirection direction score">
+	              <summary>
+	                <span class="name">scoreDirection({ price, vwap, vwapSlope, rsi, rsiSlope, macd, heikenColor, heikenCount, failedVwapReclaim })</span>
+	                <span class="tag">External · ./engines/probability.js</span>
+	              </summary>
+	              <pre><code>function scoreDirection(features): { rawUp: number, ... }</code></pre>
+	              <p>把指标特征映射为方向概率/评分的中间结果（脚本后续会做时间校正）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-applyTimeAwareness" data-name="applytimeawareness time adjustment">
+	              <summary>
+	                <span class="name">applyTimeAwareness(rawUp, remainingMinutes, candleWindowMinutes)</span>
+	                <span class="tag">External · ./engines/probability.js</span>
+	              </summary>
+	              <pre><code>function applyTimeAwareness(rawUp, remainingMinutes, window): { adjustedUp, adjustedDown, rawUp?, ... }</code></pre>
+	              <p>根据剩余时间（离结算/窗口结束）对概率进行校正，输出 adjustedUp/adjustedDown。</p>
+	            </details>
+
+	            <details class="fn" id="ext-computeEdge" data-name="computeedge edge market yes no">
+	              <summary>
+	                <span class="name">computeEdge({ modelUp, modelDown, marketYes, marketNo })</span>
+	                <span class="tag">External · ./engines/edge.js</span>
+	              </summary>
+	              <pre><code>function computeEdge(input): { edgeUp: number | null, edgeDown: number | null, ... }</code></pre>
+	              <p>比较模型概率与市场价格（yes/no 或 up/down）之间的差异，输出 edge（潜在优势）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-decide" data-name="decide enter no_trade recommendation">
+	              <summary>
+	                <span class="name">decide({ remainingMinutes, edgeUp, edgeDown, modelUp, modelDown })</span>
+	                <span class="tag">External · ./engines/edge.js</span>
+	              </summary>
+	              <pre><code>function decide(input): { action: "ENTER" | "NO_TRADE", side?: "UP" | "DOWN", phase: string, strength?: string }</code></pre>
+	              <p>结合剩余时间与 edge 给出“是否入场/方向/阶段/强度”的最终建议。</p>
+	            </details>
+
+	            <details class="fn" id="ext-appendCsvRow" data-name="appendcsvrow csv logs">
+	              <summary>
+	                <span class="name">appendCsvRow(filePath, header, row)</span>
+	                <span class="tag">External · ./utils.js</span>
+	              </summary>
+	              <pre><code>function appendCsvRow(filePath, header, row): void</code></pre>
+	              <p>向 CSV 追加一行；若文件不存在会写入 header。脚本用它写 <span class="k">./logs/signals.csv</span>。</p>
+	            </details>
+
+	            <details class="fn" id="ext-formatNumber" data-name="formatnumber ui number">
+	              <summary>
+	                <span class="name">formatNumber(n, decimals)</span>
+	                <span class="tag">External · ./utils.js</span>
+	              </summary>
+	              <pre><code>function formatNumber(n, decimals): string</code></pre>
+	              <p>数值格式化（小数位/千分位等），用于 UI 展示。</p>
+	            </details>
+
+	            <details class="fn" id="ext-formatPct" data-name="formatpct percent">
+	              <summary>
+	                <span class="name">formatPct(x, digits)</span>
+	                <span class="tag">External · ./utils.js</span>
+	              </summary>
+	              <pre><code>function formatPct(x, digits): string</code></pre>
+	              <p>百分比格式化（例如把 0.0123 转成 1.23%）。</p>
+	            </details>
+
+	            <details class="fn" id="ext-getCandleWindowTiming" data-name="getcandlewindowtiming timing window">
+	              <summary>
+	                <span class="name">getCandleWindowTiming(windowMinutes)</span>
+	                <span class="tag">External · ./utils.js</span>
+	              </summary>
+	              <pre><code>function getCandleWindowTiming(windowMinutes): { elapsedMinutes: number, remainingMinutes: number }</code></pre>
+	              <p>计算当前窗口（如 15m）内已过去/剩余的分钟数，用于 timeLeft 与日志字段。</p>
+	            </details>
+
+	            <details class="fn" id="ext-sleep" data-name="sleep delay">
+	              <summary>
+	                <span class="name">sleep(ms)</span>
+	                <span class="tag">External · ./utils.js</span>
+	              </summary>
+	              <pre><code>function sleep(ms): Promise&lt;void&gt;</code></pre>
+	              <p>异步延迟工具。主循环每轮结束会 <span class="k">await</span> 它来控制轮询节奏。</p>
+	            </details>
+
+	            <h3>指标/统计</h3>
+	            <details class="fn" id="fn-countVwapCrosses" data-name="countvwapcrosses vwap crosses">
+              <summary>
+                <span class="name">countVwapCrosses(closes, vwapSeries, lookback)</span>
+                <span class="tag">Indicator helper</span>
+              </summary>
+              <pre><code>function countVwapCrosses(closes, vwapSeries, lookback): number | null</code></pre>
+              <p>统计最近 <span class="k">lookback</span> 根中，收盘价相对 VWAP 序列的“上/下穿越次数”。用于判断行情是否频繁来回震荡。</p>
+              <div class="kvTable">
+                <div class="kvRow"><div class="key">参数</div><div><span class="k">closes</span> 收盘价数组；<span class="k">vwapSeries</span> 与 closes 对齐的 VWAP 序列；<span class="k">lookback</span> 回看长度。</div></div>
+                <div class="kvRow"><div class="key">返回</div><div>穿越次数（整数）；当长度不足返回 <span class="k">null</span>。</div></div>
+	                <div class="kvRow"><div class="key">被调用</div><div><a class="k" href="#fn-main">main()</a></div></div>
+	              </div>
+            </details>
+
+            <h3>终端渲染/格式化</h3>
+            <details class="fn" id="fn-fmtTimeLeft" data-name="fmttimeleft time left mm:ss">
+              <summary>
+                <span class="name">fmtTimeLeft(mins)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function fmtTimeLeft(mins): string</code></pre>
+              <p>将“剩余分钟（可为小数）”转成 <span class="k">mm:ss</span>（不足补 0）。</p>
+            </details>
+
+            <details class="fn" id="fn-screenWidth" data-name="screenwidth terminal columns">
+              <summary>
+                <span class="name">screenWidth()</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function screenWidth(): number</code></pre>
+              <p>读取 <span class="k">process.stdout.columns</span> 作为终端宽度；不可用或太小则回退到 80。</p>
+            </details>
+
+            <details class="fn" id="fn-sepLine" data-name="sepline separator line">
+              <summary>
+                <span class="name">sepLine(ch = "─")</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function sepLine(ch = "─"): string</code></pre>
+              <p>按终端宽度生成一条分隔线（会带白色 ANSI）。</p>
+            </details>
+
+            <details class="fn" id="fn-renderScreen" data-name="renderscreen readline clear">
+              <summary>
+                <span class="name">renderScreen(text)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function renderScreen(text): void</code></pre>
+              <p>把光标移动到 (0,0) 并清屏后写入文本，从而实现“单屏刷新”的仪表盘效果（失败则忽略）。</p>
+              <div class="kvTable">
+                <div class="kvRow"><div class="key">副作用</div><div>控制终端光标/清屏并写 stdout。</div></div>
+              </div>
+            </details>
+
+            <details class="fn" id="fn-stripAnsi" data-name="stripansi ansi regex">
+              <summary>
+                <span class="name">stripAnsi(s)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function stripAnsi(s): string</code></pre>
+              <p>移除 ANSI 颜色码，用于“可见长度”计算。</p>
+            </details>
+
+            <details class="fn" id="fn-padLabel" data-name="padlabel align">
+              <summary>
+                <span class="name">padLabel(label, width)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function padLabel(label, width): string</code></pre>
+              <p>按“可见字符宽度”补空格，保证 key/value 对齐（考虑到 label 里可能有 ANSI）。</p>
+            </details>
+
+            <details class="fn" id="fn-centerText" data-name="centertext center ansi">
+              <summary>
+                <span class="name">centerText(text, width)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function centerText(text, width): string</code></pre>
+              <p>把文本居中到指定宽度（同样按去掉 ANSI 后的可见长度计算）。</p>
+            </details>
+
+            <details class="fn" id="fn-kv" data-name="kv label value align">
+              <summary>
+                <span class="name">kv(label, value)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function kv(label, value): string</code></pre>
+              <p>格式化 key/value 行：将 label pad 到固定宽度（<span class="k">LABEL_W = 16</span>），然后拼接 value。</p>
+            </details>
+
+            <details class="fn" id="fn-section" data-name="section title unused">
+              <summary>
+                <span class="name">section(title)</span>
+                <span class="tag">UI (unused)</span>
+              </summary>
+              <pre><code>function section(title): string</code></pre>
+              <p>为标题添加白色 ANSI。当前文件中未被调用（可能是遗留/预留）。</p>
+            </details>
+
+            <details class="fn" id="fn-colorPriceLine" data-name="colorpriceline arrow up down">
+              <summary>
+                <span class="name">colorPriceLine({ label, price, prevPrice, decimals, prefix })</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function colorPriceLine({ label, price, prevPrice, decimals = 0, prefix = "" }): string</code></pre>
+              <p>生成“价格行”：对比上一轮价格决定颜色（涨绿/跌红）并加箭头；空值显示 <span class="k">-</span>。</p>
+            </details>
+
+            <details class="fn" id="fn-formatSignedDelta" data-name="formatsigneddelta pct">
+              <summary>
+                <span class="name">formatSignedDelta(delta, base)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function formatSignedDelta(delta, base): string</code></pre>
+              <p>把差值格式化成“美元 + 百分比”并带正负号；缺失/除 0 返回 <span class="k">-</span>。</p>
+            </details>
+
+            <h3>叙事/颜色（LONG/SHORT/NEUTRAL）</h3>
+            <details class="fn" id="fn-colorByNarrative" data-name="colorbynarrative long short neutral">
+              <summary>
+                <span class="name">colorByNarrative(text, narrative)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function colorByNarrative(text, narrative): string</code></pre>
+              <p>按叙事方向上色：<span class="k">LONG</span> 绿，<span class="k">SHORT</span> 红，否则灰。</p>
+            </details>
+
+            <details class="fn" id="fn-formatNarrativeValue" data-name="formatnarrativevalue">
+              <summary>
+                <span class="name">formatNarrativeValue(label, value, narrative)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function formatNarrativeValue(label, value, narrative): string</code></pre>
+              <p>输出形如 <span class="k">label: value</span> 的行，并对 value 按 narrative 上色。</p>
+            </details>
+
+            <details class="fn" id="fn-narrativeFromSign" data-name="narrativefromsign sign">
+              <summary>
+                <span class="name">narrativeFromSign(x)</span>
+                <span class="tag">Narrative</span>
+              </summary>
+              <pre><code>function narrativeFromSign(x): "LONG" | "SHORT" | "NEUTRAL"</code></pre>
+              <p>按数值正负映射方向：&gt;0 LONG，&lt;0 SHORT，其他 NEUTRAL（含 NaN/0/null）。</p>
+            </details>
+
+            <details class="fn" id="fn-narrativeFromRsi" data-name="narrativefromrsi rsi">
+              <summary>
+                <span class="name">narrativeFromRsi(rsi)</span>
+                <span class="tag">Narrative</span>
+              </summary>
+              <pre><code>function narrativeFromRsi(rsi): "LONG" | "SHORT" | "NEUTRAL"</code></pre>
+              <p>RSI 叙事：<span class="k">&ge;55</span> 视为 LONG，<span class="k">&le;45</span> 视为 SHORT，其余 NEUTRAL。</p>
+            </details>
+
+            <details class="fn" id="fn-narrativeFromSlope" data-name="narrativefromslope slope">
+              <summary>
+                <span class="name">narrativeFromSlope(slope)</span>
+                <span class="tag">Narrative</span>
+              </summary>
+              <pre><code>function narrativeFromSlope(slope): "LONG" | "SHORT" | "NEUTRAL"</code></pre>
+              <p>斜率叙事：正 LONG，负 SHORT，0/无效 NEUTRAL。</p>
+            </details>
+
+            <details class="fn" id="fn-formatProbPct" data-name="formatprobpct prob percent">
+              <summary>
+                <span class="name">formatProbPct(p, digits = 0)</span>
+                <span class="tag">UI</span>
+              </summary>
+              <pre><code>function formatProbPct(p, digits = 0): string</code></pre>
+              <p>将概率（0~1）格式化为百分比字符串；无效输入输出 <span class="k">-</span>。</p>
+            </details>
+
+            <details class="fn" id="fn-fmtEtTime" data-name="fmtettime new york et">
+              <summary>
+                <span class="name">fmtEtTime(now = new Date())</span>
+                <span class="tag">Time</span>
+              </summary>
+              <pre><code>function fmtEtTime(now = new Date()): string</code></pre>
+              <p>输出美东时间（America/New_York）<span class="k">HH:mm:ss</span>；Intl 不可用则返回 <span class="k">-</span>。</p>
+            </details>
+
+            <details class="fn" id="fn-getBtcSession" data-name="getbtcsession asia europe us overlap">
+              <summary>
+                <span class="name">getBtcSession(now = new Date())</span>
+                <span class="tag">Time</span>
+              </summary>
+              <pre><code>function getBtcSession(now = new Date()): string</code></pre>
+              <p>按 UTC 小时粗略划分 BTC 交易时段：Asia / Europe / US 及重叠窗口。</p>
+            </details>
+
+            <h3>Polymarket 市场字段解析（Price / Slug）</h3>
+            <details class="fn" id="fn-parsePriceToBeat" data-name="parsepricetobeat regex">
+              <summary>
+                <span class="name">parsePriceToBeat(market)</span>
+                <span class="tag">Polymarket</span>
+              </summary>
+              <pre><code>function parsePriceToBeat(market): number | null</code></pre>
+              <p>从市场题面（<span class="k">question/title</span>）中用正则提取 “price to beat $X” 的数值。</p>
+            </details>
+
+            <details class="fn" id="fn-safeFileSlug" data-name="safefileslug filename slug">
+              <summary>
+                <span class="name">safeFileSlug(x)</span>
+                <span class="tag">FS</span>
+              </summary>
+              <pre><code>function safeFileSlug(x): string</code></pre>
+              <p>将任意字符串规整为安全文件名片段（小写、仅 a-z0-9_-、折叠连字符、截断到 120）。</p>
+            </details>
+
+            <details class="fn" id="fn-extractNumericFromMarket" data-name="extractnumericfrommarket deep search">
+              <summary>
+                <span class="name">extractNumericFromMarket(market)</span>
+                <span class="tag">Polymarket</span>
+              </summary>
+              <pre><code>function extractNumericFromMarket(market): number | null</code></pre>
+              <p>从 market 对象中“尽可能”找出一个合理的价格/阈值数值：</p>
+              <ul>
+                <li>先尝试若干直连 key（如 <span class="k">strikePrice/threshold/priceToBeat</span> 等）</li>
+                <li>失败则深度遍历（最多 6 层），筛 key 名包含 price/strike/threshold/target/beat，且数值在 1000~2,000,000 范围内</li>
+              </ul>
+              <div class="note">
+                该函数是“尽力而为”的启发式解析，主要用于兼容不同 market JSON 结构；并不保证一定找得到或一定正确。
+              </div>
+            </details>
+
+	            <details class="fn" id="fn-priceToBeatFromPolymarketMarket" data-name="pricetobeatfrompolymarketmarket">
+	              <summary>
+	                <span class="name">priceToBeatFromPolymarketMarket(market)</span>
+	                <span class="tag">Polymarket</span>
+	              </summary>
+	              <pre><code>function priceToBeatFromPolymarketMarket(market): number | null</code></pre>
+	              <p>组合策略：先 <a class="k" href="#fn-extractNumericFromMarket">extractNumericFromMarket()</a>，若失败再 <a class="k" href="#fn-parsePriceToBeat">parsePriceToBeat()</a>。</p>
+	              <div class="note">
+	                注：当前 <span class="k">src/index.js</span> 内未直接调用该函数（可能被其它文件/未来功能使用）。
+	              </div>
+	            </details>
+
+            <h3>Polymarket：市场选择与快照</h3>
+            <details class="fn" id="fn-resolveCurrentBtc15mMarket" data-name="resolvecurrentbtc15mmarket cache latest">
+              <summary>
+                <span class="name">resolveCurrentBtc15mMarket()</span>
+                <span class="tag">Polymarket</span>
+              </summary>
+	              <pre><code>async function resolveCurrentBtc15mMarket(): Promise&lt;object | null&gt;</code></pre>
+	              <p>确定“当前要看的 market”：</p>
+	              <ul>
+	                <li>若配置了 <span class="k">CONFIG.polymarket.marketSlug</span>：直接通过 <a class="k" href="#ext-fetchMarketBySlug">fetchMarketBySlug()</a> 按 slug 拉取</li>
+	                <li>
+	                  若启用 <span class="k">autoSelectLatest</span>：通过 <a class="k" href="#ext-fetchLiveEventsBySeriesId">fetchLiveEventsBySeriesId()</a> 拉取最新 live events →
+	                  <a class="k" href="#ext-flattenEventMarkets">flattenEventMarkets()</a> 展平成 markets →
+	                  <a class="k" href="#ext-pickLatestLiveMarket">pickLatestLiveMarket()</a> 选最新 live market，并做短期缓存
+	                </li>
+	              </ul>
+              <div class="kvTable">
+                <div class="kvRow"><div class="key">缓存策略</div><div>缓存有效期使用 <span class="k">CONFIG.pollIntervalMs</span>（与轮询间隔一致）。</div></div>
+              </div>
+            </details>
+
+            <details class="fn" id="fn-fetchPolymarketSnapshot" data-name="fetchpolymarketsnapshot orderbook clob">
+              <summary>
+                <span class="name">fetchPolymarketSnapshot()</span>
+                <span class="tag">Polymarket</span>
+              </summary>
+	              <pre><code>async function fetchPolymarketSnapshot(): Promise&lt;{ ok: boolean, ... }&gt;</code></pre>
+	              <p>获取 Polymarket 快照：market 元信息 + UP/DOWN tokenId + 买价 + orderbook 摘要。</p>
+	              <ul>
+	                <li>Market 选择：内部先调用 <a class="k" href="#fn-resolveCurrentBtc15mMarket">resolveCurrentBtc15mMarket()</a></li>
+	                <li>兼容 <span class="k">outcomes/outcomePrices/clobTokenIds</span> 可能是数组或 JSON 字符串</li>
+	                <li>按 <span class="k">CONFIG.polymarket.upOutcomeLabel/downOutcomeLabel</span> 匹配 outcome，得到 tokenId</li>
+	                <li>
+	                  优先通过 <a class="k" href="#ext-fetchClobPrice">fetchClobPrice()</a> 拉取买价，并用 <a class="k" href="#ext-fetchOrderBook">fetchOrderBook()</a> +
+	                  <a class="k" href="#ext-summarizeOrderBook">summarizeOrderBook()</a> 生成 orderbook 摘要；失败则回退到 market 自带字段
+	                </li>
+	              </ul>
+              <div class="kvTable">
+                <div class="kvRow"><div class="key">返回</div><div><span class="k">ok: true</span> 时包含 <span class="k">market/tokens/prices/orderbook</span>；否则返回 <span class="k">ok: false</span> 并带 reason。</div></div>
+              </div>
+            </details>
+
+            <h3>主入口</h3>
+	            <details class="fn" id="fn-main" data-name="main loop start streams">
+	              <summary>
+	                <span class="name">main()</span>
+	                <span class="tag">Entry</span>
+	              </summary>
+	              <pre><code>async function main(): Promise&lt;void&gt;</code></pre>
+	              <p>
+	                脚本核心：启动 WS 流（<a class="k" href="#ext-startBinanceTradeStream">startBinanceTradeStream()</a> /
+	                <a class="k" href="#ext-startPolymarketChainlinkPriceStream">startPolymarketChainlinkPriceStream()</a> /
+	                <a class="k" href="#ext-startChainlinkPriceStream">startChainlinkPriceStream()</a>）→
+	                无限循环：计算窗口时间（<a class="k" href="#ext-getCandleWindowTiming">getCandleWindowTiming()</a>）→ 并行拉取数据（<a class="k" href="#ext-fetchKlines">fetchKlines()</a>、
+	                <a class="k" href="#ext-fetchLastPrice">fetchLastPrice()</a>、<a class="k" href="#ext-fetchChainlinkBtcUsd">fetchChainlinkBtcUsd()</a> 回退、<a class="k" href="#fn-fetchPolymarketSnapshot">fetchPolymarketSnapshot()</a>）→
+	                计算指标/概率（见 <a class="k" href="#ext-scoreDirection">scoreDirection()</a> / <a class="k" href="#ext-applyTimeAwareness">applyTimeAwareness()</a>）→
+	                计算 edge 与建议（<a class="k" href="#ext-computeEdge">computeEdge()</a> / <a class="k" href="#ext-decide">decide()</a>）→
+	                刷新终端（<a class="k" href="#fn-renderScreen">renderScreen()</a>）→ 写入 CSV（<a class="k" href="#ext-appendCsvRow">appendCsvRow()</a>）→
+	                休眠（<a class="k" href="#ext-sleep">sleep()</a>）。
+	              </p>
+	              <div class="note">
+	                <b>关于“链上价格 currentPrice”</b>：优先使用 Polymarket 的 WS 价格，其次 Chainlink WS，最后 HTTP 请求（减少延迟与依赖）。
+	              </div>
+	            </details>
+
+            <div class="hr"></div>
+	            <p class="note">
+	              小提示：当前文件里有少量“定义但未使用”的变量/函数（例如 <a class="k" href="#fn-section">section()</a>、<span class="k">const vwap =</span> <a class="k" href="#ext-computeSessionVwap">computeSessionVwap()</a>、<span class="k">timeLeftLine</span>）。
+	              如果你希望我顺手做一次清理（不改行为，只移除死代码/未使用变量并补上 lint），告诉我即可。
+	            </p>
+          </section>
+
+          <footer>
+            该文档为离线 HTML（CSS + SVG + 少量 JS），可直接双击打开；内容基于 <span class="k">src/index.js</span> 的当前实现。
+          </footer>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const input = document.getElementById("fnSearch");
+        const countEl = document.getElementById("fnCount");
+        const items = Array.from(document.querySelectorAll("details.fn"));
+
+        function update() {
+          const q = (input.value || "").trim().toLowerCase();
+          let visible = 0;
+          for (const el of items) {
+            const hay = (el.getAttribute("data-name") || "") + " " + (el.id || "");
+            const ok = !q || hay.includes(q);
+            el.style.display = ok ? "" : "none";
+            if (ok) visible += 1;
+          }
+          countEl.textContent = `${visible}/${items.length} functions`;
+        }
+
+        input.addEventListener("input", update);
+        update();
+      })();
+    </script>
+  </body>
+</html>
