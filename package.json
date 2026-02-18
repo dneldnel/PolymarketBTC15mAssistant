@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "terminal:5m": "node src/terminal5m.js"
   },
   "dependencies": {
     "ethers": "^6.11.1",
