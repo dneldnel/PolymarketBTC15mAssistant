@@ -4,6 +4,30 @@ import { CONFIG } from "./config.js";
 import { clamp } from "./utils.js";
 import { applyGlobalProxyFromEnv, wsAgentForUrl } from "./net/proxy.js";
 
+const BOOT_AT_MS = Date.now();
+let lastLifecycleReason = "boot";
+let shutdownStarted = false;
+
+function formatErr(err) {
+  if (!err) return "unknown";
+  if (err instanceof Error) return err.stack || err.message || String(err);
+  return String(err);
+}
+
+function formatCloseReason(reason) {
+  if (!reason) return "";
+  if (typeof reason === "string") return reason;
+  if (Buffer.isBuffer(reason)) return reason.toString("utf8");
+  return String(reason);
+}
+
+function logLifecycle(event, detail = "") {
+  const ts = formatLocalTsMs(Date.now());
+  const suffix = detail ? ` | ${detail}` : "";
+  // eslint-disable-next-line no-console
+  console.error(`[${ts}] [terminal] ${event}${suffix}`);
+}
+
 function safeJsonParse(s) {
   try {
     return JSON.parse(s);
@@ -137,10 +161,10 @@ function renderScreen(text) {
   try {
     readline.cursorTo(process.stdout, 0, 0);
     readline.clearScreenDown(process.stdout);
+    process.stdout.write(text);
   } catch {
     // ignore
   }
-  process.stdout.write(text);
 }
 
 function padRightVisible(s, width) {
@@ -287,8 +311,14 @@ let lastWsMeta = null; // { receivedAtMs, outerTimestamp, payloadTimestamp }
 
 function scheduleReconnect(reason) {
   if (closed) return;
+
+  if (reconnectTimer) {
+    return;
+  }
+
   connected = false;
   lastReconnectReason = reason || "reconnect";
+  lastLifecycleReason = `reconnect:${lastReconnectReason}`;
 
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
@@ -304,12 +334,16 @@ function scheduleReconnect(reason) {
 
   const wait = reconnectMs;
   reconnectMs = Math.min(10_000, Math.floor(reconnectMs * 1.5));
-  reconnectTimer = setTimeout(connect, wait);
-  reconnectTimer?.unref?.();
+  logLifecycle("ws_reconnect_scheduled", `${lastReconnectReason}; next_in=${wait}ms`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, wait);
 }
 
 function connect() {
   if (closed) return;
+  logLifecycle("ws_connecting", wsUrl);
 
   ws = new WebSocket(wsUrl, {
     handshakeTimeout: 10_000,
@@ -320,6 +354,8 @@ function connect() {
     connected = true;
     reconnectMs = 500;
     lastReconnectReason = "";
+    lastLifecycleReason = "ws_open";
+    logLifecycle("ws_open");
     try {
       ws.send(
         JSON.stringify({
@@ -372,8 +408,14 @@ function connect() {
     ptb.onTick({ tsMs: timestampMs, price });
   });
 
-  ws.on("close", () => scheduleReconnect("ws closed"));
-  ws.on("error", () => scheduleReconnect("ws error"));
+  ws.on("close", (code, reason) => {
+    const reasonText = formatCloseReason(reason);
+    const msg = `ws closed (code=${code}${reasonText ? `, reason=${reasonText}` : ""})`;
+    scheduleReconnect(msg);
+  });
+  ws.on("error", (err) => {
+    scheduleReconnect(`ws error: ${formatErr(err)}`);
+  });
 }
 
 function computeNowMs() {
@@ -401,8 +443,7 @@ function buildScreen() {
   const wsLine = [
     `WS: ${wsStatus}`,
     `last tick: ${ANSI.white}${lastTickTime}${ANSI.reset}`,
-    `age: ${ANSI.white}${tickAge}${ANSI.reset}`,
-    `symbol: ${ANSI.white}${symbol}${ANSI.reset}`
+    `age: ${ANSI.white}${tickAge}${ANSI.reset}`
   ].join(" | ");
 
   const reconnectLine = !connected && lastReconnectReason
@@ -471,25 +512,28 @@ function buildScreen() {
     : `${ANSI.dim}${ANSI.gray}waiting for message...${ANSI.reset}`;
 
   const lines = [
-    sepLine(),
     title,
-    sepLine(),
+    "",
+    "",
     wsLine,
     reconnectLine,
     "",
+    "",
     kv("TIME LEFT:", `${timeLeftColor}${timeLeft}${ANSI.reset}`),
     "",
-    sepLine(),
+    "",
     kv("WINDOW:", windowLine),
     kv("PTB:", ptbLine),
     "",
-    sepLine(),
+    "",
     kv("BTC/USD:", curPriceLine),
     kv("Δ vs PTB:", deltaLine),
-    sepLine(),
+    "",
+    "",
     kv("LAST WS MSG:", timeDiffDisplay),
     rawMsgLine,
-    sepLine(),
+    "",
+    "",
     centerText(`${ANSI.dim}${ANSI.gray}Ctrl+C to exit${ANSI.reset}`)
   ].filter((x) => x !== null);
 
@@ -513,13 +557,23 @@ function showCursor() {
 }
 
 hideCursor();
-process.on("exit", () => showCursor());
+process.on("exit", (code) => {
+  showCursor();
+  logLifecycle("process_exit", `code=${code}; reason=${lastLifecycleReason}`);
+});
+process.on("beforeExit", (code) => {
+  logLifecycle("process_beforeExit", `code=${code}; reason=${lastLifecycleReason}`);
+});
 
 connect();
 const drawTimer = setInterval(() => renderScreen(buildScreen()), 200);
-drawTimer?.unref?.();
 
-function shutdown(reason = "shutdown") {
+function shutdown(reason = "shutdown", exitCode = 0) {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  lastLifecycleReason = reason;
+  logLifecycle("shutdown", `reason=${reason}; exitCode=${exitCode}`);
+
   closed = true;
   connected = false;
 
@@ -543,8 +597,29 @@ function shutdown(reason = "shutdown") {
 
   showCursor();
   renderScreen(`${ANSI.reset}\n[${formatLocalTsMs(Date.now())}] ${reason}\n`);
-  process.exit(0);
+  process.exit(exitCode);
 }
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGHUP", () => shutdown("SIGHUP"));
+
+process.on("uncaughtException", (err) => {
+  const detail = formatErr(err);
+  logLifecycle("uncaughtException", detail);
+  shutdown(`uncaughtException: ${detail}`, 1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  const detail = formatErr(reason);
+  logLifecycle("unhandledRejection", detail);
+  shutdown(`unhandledRejection: ${detail}`, 1);
+});
+
+process.stdout?.on("error", (err) => {
+  const detail = formatErr(err);
+  logLifecycle("stdout_error", detail);
+  shutdown(`stdout_error: ${detail}`, 1);
+});
+
+logLifecycle("boot", `pid=${process.pid}; uptime=0ms; startedAt=${formatLocalTsMs(BOOT_AT_MS)}`);
