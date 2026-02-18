@@ -65,6 +65,18 @@ function formatLocalTsMin(ms) {
   return `${y}-${mo}-${da} ${h}:${mi}`;
 }
 
+function formatLocalTsSec(ms) {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "-";
+  const d = new Date(ms);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const da = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const s = String(d.getSeconds()).padStart(2, "0");
+  return `${y}-${mo}-${da} ${h}:${mi}:${s}`;
+}
+
 function formatMmSs(ms) {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return "--:--";
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -103,6 +115,7 @@ const ANSI = {
   gray: "\x1b[90m",
   white: "\x1b[97m",
   dim: "\x1b[2m",
+  orange: "\x1b[38;5;208m",
   hideCursor: "\x1b[?25l",
   showCursor: "\x1b[?25h"
 };
@@ -269,6 +282,8 @@ const ptb = new PtbCalculator({ bucketMs: BUCKET_MS });
 let lastTick = null; // { tsMs, receivedAtMs, price, symbol, updatedAtMs }
 let prevWsPrice = null;
 let lastWsArrow = "";
+let lastRawMessage = null; // 保存最后接收到的原始 WebSocket 消息
+let lastWsMeta = null; // { receivedAtMs, outerTimestamp, payloadTimestamp }
 
 function scheduleReconnect(reason) {
   if (closed) return;
@@ -338,6 +353,11 @@ function connect() {
 
     const updatedAtMs = epochToMs(payload.updatedAt ?? null);
 
+    // 保存元数据用于显示时间差
+    const outerTimestamp = epochToMs(data.timestamp ?? null);
+    const payloadTimestamp = timestampMs;
+    lastWsMeta = { receivedAtMs, outerTimestamp, payloadTimestamp };
+
     const displaySymbol = symbolRaw ? symbolRaw.toUpperCase().replace(/\s+/g, "") : "BTC/USD";
 
     if (prevWsPrice !== null && Number.isFinite(prevWsPrice) && price !== prevWsPrice) {
@@ -348,6 +368,7 @@ function connect() {
     prevWsPrice = price;
 
     lastTick = { tsMs: timestampMs, receivedAtMs, price, symbol: displaySymbol, updatedAtMs };
+    lastRawMessage = data; // 保存原始消息
     ptb.onTick({ tsMs: timestampMs, price });
   });
 
@@ -372,8 +393,8 @@ function buildScreen() {
 
   const wsStatus = connected ? `${ANSI.green}CONNECTED${ANSI.reset}` : `${ANSI.yellow}RECONNECTING${ANSI.reset}`;
 
-  const lastTickTime = lastTick ? formatLocalTsMs(lastTick.tsMs) : "-";
-  const tickAgeMs = lastTick?.updatedAtMs ? Math.abs(lastTick.tsMs - lastTick.updatedAtMs) : null;
+  const lastTickTime = lastTick ? formatLocalTsSec(lastTick.tsMs) : "-";
+  const tickAgeMs = lastTick?.receivedAtMs && lastTick?.tsMs ? lastTick.receivedAtMs - lastTick.tsMs : null;
   const tickAge = tickAgeMs === null ? "-" : `${Math.floor(tickAgeMs)}ms`;
   const symbol = lastTick?.symbol || "BTC/USD";
 
@@ -393,7 +414,12 @@ function buildScreen() {
     : `${ANSI.gray}waiting boundary...${ANSI.reset}`;
 
   const ptbLine = w
-    ? `${ANSI.white}$${formatUsd(w.ptbPrice, 2)}${ANSI.reset}  (${ANSI.white}${w.ptbMethod}${ANSI.reset})  @  ${formatLocalTsMin(w.startMs)}`
+    ? (() => {
+        const isExact = w.ptbMethod === "exact";
+        const priceColor = isExact ? ANSI.green : ANSI.orange;
+        const suffix = isExact ? "" : " (est.)";
+        return `${priceColor}$${formatUsd(w.ptbPrice, 2)}${ANSI.reset}${suffix}  @  ${formatLocalTsMin(w.startMs)}`;
+      })()
     : `${ANSI.gray}-${ANSI.reset}`;
 
   const curPrice = lastTick?.price ?? null;
@@ -410,6 +436,40 @@ function buildScreen() {
 
   const title = centerText(`${ANSI.white}POLYMARKET BTC/USD 5m TERMINAL${ANSI.reset}`);
 
+  // 计算时间差
+  const recvToOuterDiff = lastWsMeta?.receivedAtMs && lastWsMeta?.outerTimestamp
+    ? lastWsMeta.receivedAtMs - lastWsMeta.outerTimestamp
+    : null;
+  const outerToPayloadDiff = lastWsMeta?.outerTimestamp && lastWsMeta?.payloadTimestamp
+    ? lastWsMeta.outerTimestamp - lastWsMeta.payloadTimestamp
+    : null;
+
+  const timeDiffDisplay = (recvToOuterDiff !== null || outerToPayloadDiff !== null)
+    ? `recv-ts: ${ANSI.white}${recvToOuterDiff ?? "-"}ms${ANSI.reset} | ts-pay: ${ANSI.white}${outerToPayloadDiff ?? "-"}ms${ANSI.reset}`
+    : "-";
+
+  // 格式化原始 WebSocket 消息显示在最下方
+  const rawMsgLine = lastRawMessage
+    ? (() => {
+        const msg = { ...lastRawMessage };
+        // 格式化 timestamp
+        if (msg.timestamp !== undefined) {
+          const ts = epochToMs(msg.timestamp);
+          msg.timestamp = `${formatLocalTsMs(ts)}`;
+        }
+        // 格式化 payload.timestamp
+        if (msg.payload && typeof msg.payload === "object") {
+          const payload = { ...msg.payload };
+          if (payload.timestamp !== undefined) {
+            const ts = epochToMs(payload.timestamp);
+            payload.timestamp = `${formatLocalTsMs(ts)}`;
+          }
+          msg.payload = payload;
+        }
+        return ANSI.yellow + JSON.stringify(msg, null, 2) + ANSI.reset;
+      })()
+    : `${ANSI.dim}${ANSI.gray}waiting for message...${ANSI.reset}`;
+
   const lines = [
     sepLine(),
     title,
@@ -417,8 +477,7 @@ function buildScreen() {
     wsLine,
     reconnectLine,
     "",
-    `${ANSI.white}TIME LEFT${ANSI.reset}`,
-    `${timeLeftColor}${centerText(timeLeft)}${ANSI.reset}`,
+    kv("TIME LEFT:", `${timeLeftColor}${timeLeft}${ANSI.reset}`),
     "",
     sepLine(),
     kv("WINDOW:", windowLine),
@@ -427,6 +486,9 @@ function buildScreen() {
     sepLine(),
     kv("BTC/USD:", curPriceLine),
     kv("Δ vs PTB:", deltaLine),
+    sepLine(),
+    kv("LAST WS MSG:", timeDiffDisplay),
+    rawMsgLine,
     sepLine(),
     centerText(`${ANSI.dim}${ANSI.gray}Ctrl+C to exit${ANSI.reset}`)
   ].filter((x) => x !== null);
