@@ -23,13 +23,13 @@ function epochToMs(x) {
   return Math.floor(n * 1000);
 }
 
-const MINUTE_MS = 60_000;
-function floorToMinute(ms) {
-  return Math.floor(ms / MINUTE_MS) * MINUTE_MS;
+const BUCKET_MS = 5 * 60_000;
+function floorToBucket(ms) {
+  return Math.floor(ms / BUCKET_MS) * BUCKET_MS;
 }
 
-function nextMinuteBoundary(ms) {
-  return floorToMinute(ms) + MINUTE_MS;
+function nextBucketBoundary(ms) {
+  return floorToBucket(ms) + BUCKET_MS;
 }
 
 function formatTimestampMs(ms) {
@@ -71,8 +71,8 @@ if (!wsUrl) {
   let lastPrintedAt = 0;
   let reconnectTimer = null;
 
-  let prevTick = null; // { tsMs, price, symbol, rawTimestampValue }
-  let nextMinuteMs = null;
+  let prevTick = null; // { tsMs, price, symbol }
+  let nextBucketMs = null;
 
   const connect = () => {
     if (closed) return;
@@ -136,28 +136,33 @@ if (!wsUrl) {
       const price = toFiniteNumber(payload.value ?? payload.price ?? payload.current ?? payload.data);
       if (price === null) return;
 
-      const rawTimestampValue = payload.timestamp ?? payload.updatedAt ?? null;
-      const rawTimestampMs = epochToMs(rawTimestampValue);
+      const updatedAt = epochToMs(payload.updatedAt ?? null);
+      const timestamp = epochToMs(payload.timestamp ?? null);
+
+      const wsLineParts = [
+        `receivedAt: ${formatTimestampMs(receivedAtMs)}`,
+        `updatedAt: ${formatTimestampMs(updatedAt)}`
+      ];
+      if (timestamp !== null && (updatedAt === null || updatedAt !== timestamp)) {
+        wsLineParts.push(`timestamp: ${formatTimestampMs(timestamp)}`);
+      }
+      wsLineParts.push(`btc/usd: ${formatPriceUsd(price)}`);
 
       console.log(
-        `receivedAt: ${formatTimestampMs(receivedAtMs)} ` +
-          `updatedAt: ${formatTimestampMs(rawTimestampMs)} ` +
-          `rawTimestampMs: ${formatTimestampMs(rawTimestampMs)} ` +
-          `btc/usd: ${formatPriceUsd(price)}`
+        wsLineParts.join(" ")
       );
 
-      if (rawTimestampMs === null) return;
+      if (timestamp === null) return;
 
       const tick = {
-        tsMs: rawTimestampMs,
+        tsMs: timestamp,
         price,
-        symbol: symbol || null,
-        rawTimestampValue
+        symbol: symbol || null
       };
 
       if (!prevTick) {
         prevTick = tick;
-        nextMinuteMs = nextMinuteBoundary(tick.tsMs);
+        nextBucketMs = nextBucketBoundary(tick.tsMs);
         return;
       }
 
@@ -166,31 +171,31 @@ if (!wsUrl) {
         return;
       }
 
-      if (nextMinuteMs === null) nextMinuteMs = nextMinuteBoundary(prevTick.tsMs);
+      if (nextBucketMs === null) nextBucketMs = nextBucketBoundary(prevTick.tsMs);
 
-      while (nextMinuteMs <= tick.tsMs) {
+      while (nextBucketMs <= tick.tsMs) {
         let method = null;
-        let minutePrice = null;
+        let bucketPrice = null;
         let before = null;
         let after = null;
 
-        if (tick.tsMs === nextMinuteMs) {
+        if (tick.tsMs === nextBucketMs) {
           method = "exact";
-          minutePrice = tick.price;
-          before = prevTick.tsMs < nextMinuteMs ? prevTick : null;
+          bucketPrice = tick.price;
+          before = prevTick.tsMs < nextBucketMs ? prevTick : null;
           after = tick;
-        } else if (prevTick.tsMs < nextMinuteMs && tick.tsMs > nextMinuteMs) {
+        } else if (prevTick.tsMs < nextBucketMs && tick.tsMs > nextBucketMs) {
           method = "avg";
-          minutePrice = (prevTick.price + tick.price) / 2;
+          bucketPrice = (prevTick.price + tick.price) / 2;
           before = prevTick;
           after = tick;
         }
 
-        if (minutePrice !== null) {
-          console.log(`${method} btc/usd: ${formatPriceUsd(minutePrice)} dt: ${formatTimestampMs(nextMinuteMs)}`);
+        if (bucketPrice !== null) {
+          console.log(`${method} btc/usd: ${formatPriceUsd(bucketPrice)} dt: ${formatTimestampMs(nextBucketMs)}`);
         }
 
-        nextMinuteMs += MINUTE_MS;
+        nextBucketMs += BUCKET_MS;
       }
 
       prevTick = tick;
