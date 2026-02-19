@@ -5,7 +5,7 @@ import readline from "node:readline";
 import { URL, fileURLToPath } from "node:url";
 
 const PORT = Math.max(1, Number(process.env.REPLAY_PORT || 8787));
-const HOST = process.env.REPLAY_HOST || "127.0.0.1";
+const HOST = process.env.REPLAY_HOST || "0.0.0.0";
 const LOG_ROOT = path.resolve(process.cwd(), process.env.COLLECTOR_OUTPUT_DIR || "./logs/raw");
 const DOC_ROOT = path.resolve(process.cwd(), "./docs");
 const BUCKET_MS = 5 * 60 * 1000;
