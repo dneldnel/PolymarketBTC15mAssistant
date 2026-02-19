@@ -24,13 +24,7 @@ function toFiniteNumber(x) {
   return Number.isFinite(n) ? n : null;
 }
 
-function formatErr(err) {
-  if (!err) return "unknown";
-  if (err instanceof Error) return err.stack || err.message || String(err);
-  return String(err);
-}
-
-function formatCloseReason(reason) {
+function formatWsCloseReason(reason) {
   if (!reason) return "";
   if (typeof reason === "string") return reason;
   if (Buffer.isBuffer(reason)) return reason.toString("utf8");
@@ -178,7 +172,14 @@ function buildStatusScreen({
   liveWsConnected,
   liveWsMode,
   liveWsLastError,
-  pendingAggregateBuckets
+  liveWsReconnectCount,
+  liveWsLastReconnectReason,
+  clobWsConnected,
+  clobWsLastError,
+  clobWsReconnectCount,
+  clobWsLastReconnectReason,
+  pendingAggregateBuckets,
+  updownLastAgeMs
 }) {
   const now = Date.now();
   const lines = [];
@@ -197,11 +198,18 @@ function buildStatusScreen({
   lines.push(`live_ws_status:     ${liveWsConnected ? "CONNECTED" : "RECONNECTING"}`);
   lines.push(`live_ws_mode:       ${liveWsMode || "-"}`);
   lines.push(`live_ws_error:      ${liveWsLastError || "-"}`);
+  lines.push(`live_ws_reconnects: ${liveWsReconnectCount}`);
+  lines.push(`live_ws_last_reason:${liveWsLastReconnectReason || "-"}`);
+  lines.push(`clob_ws_status:     ${clobWsConnected ? "CONNECTED" : "RECONNECTING"}`);
+  lines.push(`clob_ws_error:      ${clobWsLastError || "-"}`);
+  lines.push(`clob_ws_reconnects: ${clobWsReconnectCount}`);
+  lines.push(`clob_ws_last_reason:${clobWsLastReconnectReason || "-"}`);
   lines.push(`market_slug:        ${activeMarket.slug || "-"}`);
   lines.push(`market_id:          ${activeMarket.id || "-"}`);
   lines.push(`up_token_id:        ${activeMarket.upTokenId || "-"}`);
   lines.push(`down_token_id:      ${activeMarket.downTokenId || "-"}`);
   lines.push(`btc_polymarket:     ${lastPolymarketPrice === null ? "-" : String(lastPolymarketPrice)}`);
+  lines.push(`updown_age_ms:      ${updownLastAgeMs === null ? "-" : String(updownLastAgeMs)}`);
   lines.push("");
   lines.push("jsonl record counts");
   lines.push("------------------------------------------------------------");
@@ -235,34 +243,18 @@ function startPolymarketBtcRtdsStream({
   let lastUpdatedAt = null;
   let connected = false;
   let lastError = "";
+  let reconnectCount = 0;
+  let lastReconnectReason = "";
 
   const setStatus = (patch = {}) => {
     connected = patch.connected ?? connected;
     lastError = patch.lastError ?? lastError;
+    reconnectCount = patch.reconnectCount ?? reconnectCount;
+    lastReconnectReason = patch.lastReconnectReason ?? lastReconnectReason;
     const mode = patch.mode ?? (useProxy ? "proxy" : "direct");
     if (typeof onStatus === "function") {
-      onStatus({ connected, mode, lastError });
+      onStatus({ connected, mode, lastError, reconnectCount, lastReconnectReason });
     }
-  };
-
-  const scheduleReconnect = (mode, reason = "") => {
-    if (closed) return;
-    if (reconnectTimer) return;
-
-    setStatus({ connected: false, lastError: reason, mode });
-    try {
-      ws?.terminate();
-    } catch {
-      // ignore
-    }
-    ws = null;
-    const wait = reconnectMs;
-    reconnectMs = Math.min(10_000, Math.floor(reconnectMs * 1.5));
-    useProxy = !useProxy;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      connect();
-    }, wait);
   };
 
   const connect = () => {
@@ -270,30 +262,56 @@ function startPolymarketBtcRtdsStream({
 
     const mode = useProxy ? "proxy" : "direct";
     const agent = useProxy ? wsAgentForUrl(wsUrl) : undefined;
-    const socket = new WebSocket(wsUrl, {
+    ws = new WebSocket(wsUrl, {
       handshakeTimeout: 10_000,
       ...(agent ? { agent } : {})
     });
-    ws = socket;
     setStatus({ connected: false, mode });
 
-    socket.on("open", () => {
-      if (closed || ws !== socket) return;
+    const scheduleReconnect = (reason = "") => {
+      if (closed) return;
+      if (reconnectTimer) return;
+      const normalizedReason = String(reason || "reconnect");
+      reconnectCount += 1;
+      lastReconnectReason = normalizedReason;
+      setStatus({
+        connected: false,
+        lastError: normalizedReason,
+        mode,
+        reconnectCount,
+        lastReconnectReason
+      });
+      try {
+        ws?.terminate();
+      } catch {
+        // ignore
+      }
+      ws = null;
+      const wait = reconnectMs;
+      reconnectMs = Math.min(10_000, Math.floor(reconnectMs * 1.5));
+      useProxy = !useProxy;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, wait);
+    };
+
+    ws.on("open", () => {
       reconnectMs = 500;
       setStatus({ connected: true, lastError: "", mode });
       try {
-        socket.send(
+        ws.send(
           JSON.stringify({
             action: "subscribe",
             subscriptions: [{ topic: "crypto_prices_chainlink", type: "*", filters: "" }]
           })
         );
       } catch (err) {
-        scheduleReconnect(mode, `subscribe_failed: ${err?.message ?? String(err)}`);
+        scheduleReconnect(`subscribe_failed: ${err?.message ?? String(err)}`);
       }
     });
 
-    socket.on("message", (buf) => {
+    ws.on("message", (buf) => {
       const msg = typeof buf === "string" ? buf : buf?.toString?.() ?? "";
       if (!msg || !msg.trim()) return;
 
@@ -328,14 +346,12 @@ function startPolymarketBtcRtdsStream({
       }
     });
 
-    socket.on("close", (code, reason) => {
-      if (ws !== socket) return;
-      const reasonText = formatCloseReason(reason);
-      scheduleReconnect(mode, `close_${code}${reasonText ? `:${reasonText}` : ""}`);
+    ws.on("close", (code, reason) => {
+      const reasonText = formatWsCloseReason(reason);
+      scheduleReconnect(`close_${code}${reasonText ? `:${reasonText}` : ""}`);
     });
-    socket.on("error", (err) => {
-      if (ws !== socket) return;
-      scheduleReconnect(mode, `error: ${err?.message ?? String(err)}`);
+    ws.on("error", (err) => {
+      scheduleReconnect(`error: ${err?.message ?? String(err)}`);
     });
   };
 
@@ -343,7 +359,15 @@ function startPolymarketBtcRtdsStream({
 
   return {
     getLast() {
-      return { price: lastPrice, updatedAt: lastUpdatedAt, source: "polymarket_ws", connected, lastError };
+      return {
+        price: lastPrice,
+        updatedAt: lastUpdatedAt,
+        source: "polymarket_ws",
+        connected,
+        lastError,
+        reconnectCount,
+        lastReconnectReason
+      };
     },
     close() {
       closed = true;
@@ -352,12 +376,11 @@ function startPolymarketBtcRtdsStream({
         reconnectTimer = null;
       }
       try {
-        ws?.terminate();
+        ws?.close();
       } catch {
         // ignore
       }
       ws = null;
-      setStatus({ connected: false, lastError: "closed" });
     }
   };
 }
@@ -521,15 +544,30 @@ function buildStateFromPayload(prev, payload, parent, receiveAtMs) {
 function startPolymarketClobMarketStream({
   wsUrl = process.env.POLYMARKET_CLOB_WS_URL || "wss://ws-subscriptions-clob.polymarket.com/ws/market",
   onRawMessage,
-  onUpdate
+  onUpdate,
+  onStatus
 } = {}) {
   let ws = null;
   let closed = false;
   let reconnectMs = 500;
   let reconnectTimer = null;
   let subscribedAssets = new Set();
+  let connected = false;
+  let lastError = "";
+  let reconnectCount = 0;
+  let lastReconnectReason = "";
 
   const stateByAssetId = new Map();
+
+  const setStatus = (patch = {}) => {
+    connected = patch.connected ?? connected;
+    lastError = patch.lastError ?? lastError;
+    reconnectCount = patch.reconnectCount ?? reconnectCount;
+    lastReconnectReason = patch.lastReconnectReason ?? lastReconnectReason;
+    if (typeof onStatus === "function") {
+      onStatus({ connected, lastError, reconnectCount, lastReconnectReason });
+    }
+  };
 
   const sendSubscription = () => {
     if (!ws || ws.readyState !== WebSocket.OPEN || subscribedAssets.size === 0) return;
@@ -577,17 +615,32 @@ function startPolymarketClobMarketStream({
     }
   };
 
-  const scheduleReconnect = () => {
+  const scheduleReconnect = (waitOverrideMs = null, force = false, reason = "") => {
     if (closed) return;
-    if (reconnectTimer) return;
+    if (reconnectTimer && !force) return;
+    if (reconnectTimer && force) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    const normalizedReason = String(reason || (force ? "forced_reconnect" : "reconnect"));
+    reconnectCount += 1;
+    lastReconnectReason = normalizedReason;
+    setStatus({
+      connected: false,
+      lastError: normalizedReason,
+      reconnectCount,
+      lastReconnectReason
+    });
     try {
       ws?.terminate();
     } catch {
       // ignore
     }
     ws = null;
-    const wait = reconnectMs;
-    reconnectMs = Math.min(10_000, Math.floor(reconnectMs * 1.5));
+    const wait = waitOverrideMs === null ? reconnectMs : Math.max(10, Math.floor(waitOverrideMs));
+    if (waitOverrideMs === null) {
+      reconnectMs = Math.min(10_000, Math.floor(reconnectMs * 1.5));
+    }
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       connect();
@@ -602,10 +655,12 @@ function startPolymarketClobMarketStream({
       agent: wsAgentForUrl(wsUrl)
     });
     ws = socket;
+    setStatus({ connected: false });
 
     socket.on("open", () => {
-      if (closed || ws !== socket) return;
+      if (ws !== socket || closed) return;
       reconnectMs = 500;
+      setStatus({ connected: true, lastError: "" });
       try {
         sendSubscription();
       } catch {
@@ -636,13 +691,14 @@ function startPolymarketClobMarketStream({
       }
     });
 
-    socket.on("close", () => {
+    socket.on("close", (code, reason) => {
       if (ws !== socket) return;
-      scheduleReconnect();
+      const reasonText = formatWsCloseReason(reason);
+      scheduleReconnect(null, false, `close_${code}${reasonText ? `:${reasonText}` : ""}`);
     });
-    socket.on("error", () => {
+    socket.on("error", (err) => {
       if (ws !== socket) return;
-      scheduleReconnect();
+      scheduleReconnect(null, false, `error:${err?.message ?? String(err)}`);
     });
   };
 
@@ -680,6 +736,11 @@ function startPolymarketClobMarketStream({
         // ignore
       }
       ws = null;
+      setStatus({ connected: false, lastError: "closed" });
+    },
+    reconnect() {
+      if (closed) return;
+      scheduleReconnect(20, true, "manual_reconnect");
     }
   };
 }
@@ -698,6 +759,9 @@ async function main() {
   const aggregateMsRaw = Number(process.env.COLLECTOR_AGGREGATE_MS ?? 500);
   const aggregateMs = Number.isFinite(aggregateMsRaw) && aggregateMsRaw > 0 ? Math.floor(aggregateMsRaw) : 0;
   const saveClobRaw = toBoolEnv(process.env.COLLECTOR_SAVE_CLOB_RAW, false);
+  const clobNoDataAfterSwitchMs = Math.max(1000, Number(process.env.COLLECTOR_CLOB_NO_DATA_AFTER_SWITCH_MS || 4000));
+  const clobStaleMs = Math.max(clobNoDataAfterSwitchMs, Number(process.env.COLLECTOR_CLOB_STALE_MS || 12000));
+  const clobRepairCooldownMs = Math.max(1000, Number(process.env.COLLECTOR_CLOB_REPAIR_COOLDOWN_MS || 5000));
 
   let activeMarket = {
     slug: null,
@@ -709,7 +773,15 @@ async function main() {
   let liveWsConnected = false;
   let liveWsMode = "proxy";
   let liveWsLastError = "";
-  let shutdownStarted = false;
+  let liveWsReconnectCount = 0;
+  let liveWsLastReconnectReason = "";
+  let clobWsConnected = false;
+  let clobWsLastError = "";
+  let clobWsReconnectCount = 0;
+  let clobWsLastReconnectReason = "";
+  let lastUpdownReceiveAtMs = 0;
+  let lastMarketSwitchAtMs = 0;
+  let lastClobRepairAtMs = 0;
   const aggregateBuckets = new Map();
 
   const resolveWindowId = (fallbackMs = Date.now()) => {
@@ -831,6 +903,7 @@ async function main() {
 
     const eventAtMs = Number.isFinite(Number(evt.eventAtMs)) ? Number(evt.eventAtMs) : Number(evt.receiveAtMs);
     const receiveAtMs = Number.isFinite(Number(evt.receiveAtMs)) ? Number(evt.receiveAtMs) : Date.now();
+    lastUpdownReceiveAtMs = receiveAtMs;
 
     if (aggregateMs <= 0) {
       writeUpdownSnapshot({
@@ -894,6 +967,12 @@ async function main() {
         message: evt.message
       }, evt.receiveAtMs);
     },
+    onStatus(status) {
+      clobWsConnected = Boolean(status?.connected);
+      clobWsLastError = status?.lastError || "";
+      clobWsReconnectCount = Number(status?.reconnectCount ?? clobWsReconnectCount);
+      clobWsLastReconnectReason = status?.lastReconnectReason || clobWsLastReconnectReason;
+    },
     onUpdate: persistState
   });
 
@@ -913,6 +992,8 @@ async function main() {
       liveWsConnected = Boolean(status?.connected);
       liveWsMode = status?.mode || liveWsMode;
       liveWsLastError = status?.lastError || "";
+      liveWsReconnectCount = Number(status?.reconnectCount ?? liveWsReconnectCount);
+      liveWsLastReconnectReason = status?.lastReconnectReason || liveWsLastReconnectReason;
     }
   });
 
@@ -950,6 +1031,8 @@ async function main() {
       const prevWindowId = normalizeDirName(prevMarket.slug) || unassignedDir;
       flushAggregation(Date.now(), true);
       activeMarket = { slug, id, upTokenId, downTokenId };
+      lastMarketSwitchAtMs = Date.now();
+      lastUpdownReceiveAtMs = 0;
       clobStream.clearState();
       clobStream.subscribeAssets([upTokenId, downTokenId], { resetState: true, forceSend: true });
 
@@ -975,9 +1058,36 @@ async function main() {
     clobStream.subscribeAssets(assets, { forceSend: true });
   };
 
+  const maybeRepairClobStream = (nowMs) => {
+    const assets = [activeMarket.upTokenId, activeMarket.downTokenId].filter(Boolean);
+    if (!activeMarket.slug || assets.length === 0) return;
+    if (nowMs - lastClobRepairAtMs < clobRepairCooldownMs) return;
+
+    const hasDataAfterSwitch = lastUpdownReceiveAtMs > 0 && lastUpdownReceiveAtMs >= lastMarketSwitchAtMs;
+    const noDataAfterSwitch = lastMarketSwitchAtMs > 0 && !hasDataAfterSwitch && (nowMs - lastMarketSwitchAtMs >= clobNoDataAfterSwitchMs);
+    const staleStream = lastUpdownReceiveAtMs > 0 && (nowMs - lastUpdownReceiveAtMs >= clobStaleMs);
+
+    if (!noDataAfterSwitch && !staleStream) return;
+
+    lastClobRepairAtMs = nowMs;
+    if (noDataAfterSwitch) {
+      writeLifecycle("clob_repair_no_data_after_switch", {
+        since_switch_ms: nowMs - lastMarketSwitchAtMs,
+        assets_count: assets.length
+      });
+    } else {
+      writeLifecycle("clob_repair_stale_stream", {
+        stale_ms: nowMs - lastUpdownReceiveAtMs,
+        assets_count: assets.length
+      });
+    }
+    clobStream.reconnect();
+  };
+
   const timerMarket = setInterval(async () => {
     await refreshMarket();
     syncSubscriptions();
+    maybeRepairClobStream(Date.now());
   }, marketRefreshMs);
 
   const timerHeartbeat = setInterval(() => {
@@ -1015,7 +1125,14 @@ async function main() {
       liveWsConnected,
       liveWsMode,
       liveWsLastError,
-      pendingAggregateBuckets: aggregateBuckets.size
+      liveWsReconnectCount,
+      liveWsLastReconnectReason,
+      clobWsConnected,
+      clobWsLastError,
+      clobWsReconnectCount,
+      clobWsLastReconnectReason,
+      pendingAggregateBuckets: aggregateBuckets.size,
+      updownLastAgeMs: lastUpdownReceiveAtMs > 0 ? Math.max(0, now - lastUpdownReceiveAtMs) : null
     });
     renderScreen(text);
   }, screenRefreshMs);
@@ -1041,20 +1158,25 @@ async function main() {
         liveWsConnected,
         liveWsMode,
         liveWsLastError,
-        pendingAggregateBuckets: aggregateBuckets.size
+        liveWsReconnectCount,
+        liveWsLastReconnectReason,
+        clobWsConnected,
+        clobWsLastError,
+        clobWsReconnectCount,
+        clobWsLastReconnectReason,
+        pendingAggregateBuckets: aggregateBuckets.size,
+        updownLastAgeMs: lastUpdownReceiveAtMs > 0 ? Math.max(0, now - lastUpdownReceiveAtMs) : null
       })
     );
   }
 
-  const shutdown = (reason, exitCode = 0) => {
-    if (shutdownStarted) return;
-    shutdownStarted = true;
+  const shutdown = (reason) => {
     clearInterval(timerMarket);
     clearInterval(timerHeartbeat);
     clearInterval(timerFlush);
     clearInterval(timerScreen);
     flushAggregation(Date.now(), true);
-    writeLifecycle("collector_stopped", { reason, exit_code: exitCode });
+    writeLifecycle("collector_stopped", { reason });
     try {
       clobStream.close();
     } catch {
@@ -1065,24 +1187,11 @@ async function main() {
     } catch {
       // ignore
     }
-    process.exit(exitCode);
+    process.exit(0);
   };
 
   process.once("SIGINT", () => shutdown("SIGINT"));
   process.once("SIGTERM", () => shutdown("SIGTERM"));
-  process.once("SIGHUP", () => shutdown("SIGHUP"));
-
-  process.on("uncaughtException", (err) => {
-    shutdown(`uncaughtException: ${formatErr(err)}`, 1);
-  });
-
-  process.on("unhandledRejection", (reason) => {
-    shutdown(`unhandledRejection: ${formatErr(reason)}`, 1);
-  });
-
-  process.stdout?.on("error", (err) => {
-    shutdown(`stdout_error: ${formatErr(err)}`, 1);
-  });
 }
 
 main().catch((err) => {
