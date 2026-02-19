@@ -649,7 +649,7 @@ function startPolymarketClobMarketStream({
   connect();
 
   return {
-    subscribeAssets(assetIds, { resetState = false } = {}) {
+    subscribeAssets(assetIds, { resetState = false, forceSend = false } = {}) {
       const next = new Set(
         (Array.isArray(assetIds) ? assetIds : [])
           .map((x) => String(x || "").trim())
@@ -658,7 +658,7 @@ function startPolymarketClobMarketStream({
       const changed = !isSameAssetSet(subscribedAssets, next);
       subscribedAssets = next;
       if (resetState) stateByAssetId.clear();
-      if (changed) sendSubscription();
+      if (changed || forceSend) sendSubscription();
       return changed;
     },
     getLastByAssetId(assetId) {
@@ -951,7 +951,7 @@ async function main() {
       flushAggregation(Date.now(), true);
       activeMarket = { slug, id, upTokenId, downTokenId };
       clobStream.clearState();
-      clobStream.subscribeAssets([upTokenId, downTokenId], { resetState: true });
+      clobStream.subscribeAssets([upTokenId, downTokenId], { resetState: true, forceSend: true });
 
       writeLifecycle("market_switch", {
         prev_market_slug: prevMarket.slug,
@@ -972,7 +972,7 @@ async function main() {
 
   const syncSubscriptions = () => {
     const assets = [activeMarket.upTokenId, activeMarket.downTokenId].filter(Boolean);
-    clobStream.subscribeAssets(assets);
+    clobStream.subscribeAssets(assets, { forceSend: true });
   };
 
   const timerMarket = setInterval(async () => {
