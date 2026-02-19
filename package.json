@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "terminal:5m": "node src/terminal5m.js",
-    "replay:mvp": "node src/replayServer.js"
+    "replay:mvp": "node src/replayServer.js",
+    "stats:5m-patterns": "node src/scripts/stats5mPatterns.js"
   },
   "dependencies": {
     "ethers": "^6.11.1",

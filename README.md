@@ -176,6 +176,22 @@ Example:
 npm start
 ```
 
+## 5m Pattern Stats
+
+Use the raw collector logs to count 5-minute up/down behavior patterns:
+
+```bash
+npm run stats:5m-patterns
+```
+
+Common options:
+
+```bash
+npm run stats:5m-patterns -- --date 2026-02-19
+npm run stats:5m-patterns -- --root ./logs/raw --include-incomplete
+npm run stats:5m-patterns -- --json
+```
+
 ### Stop
 
 Press `Ctrl + C` in the terminal.
