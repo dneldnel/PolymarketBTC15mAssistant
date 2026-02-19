@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "node src/index.js",
-    "terminal:5m": "node src/terminal5m.js"
+    "terminal:5m": "node src/terminal5m.js",
+    "replay:mvp": "node src/replayServer.js"
   },
   "dependencies": {
     "ethers": "^6.11.1",
