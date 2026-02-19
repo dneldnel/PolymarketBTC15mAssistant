@@ -119,6 +119,20 @@
         grid-template-columns: 1fr;
         gap: 12px;
       }
+      .ptb-wrap {
+        margin-top: 12px;
+        padding: 12px 14px 14px;
+      }
+      .ptb-title {
+        margin: 4px 0 10px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .ptb-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
       .chart-card {
         padding: 10px 12px 12px;
       }
@@ -211,9 +225,14 @@
 
       <section class="panel stats" id="stats"></section>
 
+      <section class="panel ptb-wrap">
+        <h2 class="ptb-title">PTB（Price To Beat）信息</h2>
+        <div id="ptbMeta" class="ptb-meta"></div>
+      </section>
+
       <section class="grid">
         <article class="panel chart-card">
-          <h2 class="chart-title">BTC/USD 价格</h2>
+          <h2 class="chart-title">BTC/USD 价格（含 PTB）</h2>
           <div id="btcChart" class="chart"></div>
         </article>
         <article class="panel chart-card">
@@ -231,6 +250,7 @@
       const statusEl = document.getElementById("status");
       const statsEl = document.getElementById("stats");
       const intervalListEl = document.getElementById("intervalList");
+      const ptbMetaEl = document.getElementById("ptbMeta");
       const btcContainer = document.getElementById("btcChart");
       const oddsContainer = document.getElementById("oddsChart");
 
@@ -263,6 +283,16 @@
           el.className = "chip";
           el.textContent = text;
           statsEl.appendChild(el);
+        }
+      }
+
+      function renderPtbMeta(items) {
+        ptbMetaEl.innerHTML = "";
+        for (const text of items) {
+          const el = document.createElement("div");
+          el.className = "chip";
+          el.textContent = text;
+          ptbMetaEl.appendChild(el);
         }
       }
 
@@ -378,9 +408,44 @@
         return [point[0], point[1], point[2] || "", point[3] || 1, point[4] || ""];
       }
 
+      function compactPriceSeries(points, minTimeGapMs = 100, minValueGap = 0.2) {
+        if (!Array.isArray(points) || points.length <= 1) return points || [];
+        const out = [];
+        let lastTs = null;
+        let lastVal = null;
+        for (const p of points) {
+          const ts = Number(p[0]);
+          const v = Number(p[1]);
+          if (!Number.isFinite(ts) || !Number.isFinite(v)) continue;
+          if (lastTs === null) {
+            out.push(p);
+            lastTs = ts;
+            lastVal = v;
+            continue;
+          }
+          if ((ts - lastTs) >= minTimeGapMs || Math.abs(v - lastVal) >= minValueGap) {
+            out.push(p);
+            lastTs = ts;
+            lastVal = v;
+          }
+        }
+        const tail = points[points.length - 1];
+        if (tail && (out.length === 0 || out[out.length - 1][0] !== tail[0] || out[out.length - 1][1] !== tail[1])) {
+          out.push(tail);
+        }
+        return out;
+      }
+
       function draw(series, interval) {
         ensureCharts();
         const btcPoints = Array.isArray(series.btc) ? series.btc : [];
+        const ptbPointsRaw = Array.isArray(series.ptb) ? series.ptb : [];
+        const ptbPoints = compactPriceSeries(
+          ptbPointsRaw.map((x) => [x[0], x[1], x[2] || "", x[3] ?? null, x[4] ?? null]),
+          100,
+          0.01
+        );
+        const latestPtbPrice = ptbPointsRaw.length ? Number(ptbPointsRaw[ptbPointsRaw.length - 1][1]) : null;
         const upPointsRaw = Array.isArray(series.up) ? series.up : [];
         const downPointsRaw = Array.isArray(series.down) ? series.down : [];
         const merged = mergeOddsSeries(upPointsRaw, downPointsRaw);
@@ -393,8 +458,25 @@
 
         btcChart.setOption({
           animation: false,
-          grid: { left: 50, right: 18, top: 20, bottom: 55 },
-          tooltip: { trigger: "axis" },
+          grid: { left: 86, right: 56, top: 24, bottom: 55, containLabel: true },
+          tooltip: {
+            trigger: "axis",
+            formatter: (params) => {
+              if (!params || params.length === 0) return "";
+              const ts = params[0].value[0];
+              const lines = [`<b>${fmtTime(ts)}</b>`];
+              for (const p of params) {
+                const val = Number(p.value[1]);
+                if (p.seriesName === "PTB") {
+                  const method = p.value[2] || "-";
+                  lines.push(`${p.marker}${p.seriesName}: ${val.toFixed(2)} [${method}]`);
+                } else {
+                  lines.push(`${p.marker}${p.seriesName}: ${val.toFixed(2)}`);
+                }
+              }
+              return lines.join("<br/>");
+            }
+          },
           xAxis: { type: "time" },
           yAxis: {
             type: "value",
@@ -413,14 +495,44 @@
               smooth: 0.06,
               itemStyle: { color: "#1864ab" },
               lineStyle: { width: 2, color: "#1864ab" },
+              markLine: Number.isFinite(latestPtbPrice)
+                ? {
+                  symbol: "none",
+                  silent: true,
+                  label: {
+                    show: true,
+                    position: "insideStartTop",
+                    formatter: `PTB ${latestPtbPrice.toFixed(2)}`,
+                    color: "#d9480f",
+                    padding: [2, 4],
+                    backgroundColor: "rgba(255,255,255,0.72)"
+                  },
+                  lineStyle: {
+                    type: "dashed",
+                    width: 1.8,
+                    color: "#d9480f",
+                    opacity: 0.9
+                  },
+                  data: [{ yAxis: latestPtbPrice }]
+                }
+                : undefined,
               data: btcPoints
+            },
+            {
+              name: "PTB",
+              type: "line",
+              showSymbol: false,
+              smooth: false,
+              itemStyle: { color: "#d9480f" },
+              lineStyle: { width: 2.8, color: "#d9480f" },
+              data: ptbPoints
             }
           ]
         }, true);
 
         oddsChart.setOption({
           animation: false,
-          grid: { left: 50, right: 18, top: 20, bottom: 55 },
+          grid: { left: 72, right: 28, top: 20, bottom: 55, containLabel: true },
           tooltip: {
             trigger: "axis",
             formatter: (params) => {
@@ -486,6 +598,15 @@
           ? `UP范围: ${Math.min(...upPoints.map((x) => x[1])).toFixed(3)}~${Math.max(...upPoints.map((x) => x[1])).toFixed(3)}`
           : "UP范围: -";
 
+        const ptbMethods = Array.from(new Set(ptbPointsRaw.map((x) => String(x[2] || "")).filter(Boolean)));
+        const latestPtb = ptbPointsRaw.length ? ptbPointsRaw[ptbPointsRaw.length - 1] : null;
+        renderPtbMeta([
+          `PTB 点数: ${ptbPointsRaw.length}`,
+          `PTB 方法: ${ptbMethods.length ? ptbMethods.join("/") : "-"}`,
+          `最新 PTB: ${latestPtb ? Number(latestPtb[1]).toFixed(2) : "-"}`,
+          `最新 PTB 时间: ${latestPtb ? fmtTime(latestPtb[0]) : "-"}`
+        ]);
+
         renderStats([
           `区间: ${interval.label}`,
           `市场: ${interval.marketSlug || "-"}`,
@@ -509,6 +630,7 @@
         if (!interval) {
           setStatus("当前日期没有可用区间");
           renderStats(["无可用区间"]);
+          renderPtbMeta(["PTB 点数: 0", "PTB 方法: -", "最新 PTB: -", "最新 PTB 时间: -"]);
           return;
         }
         setStatus("加载序列中...");
@@ -578,6 +700,7 @@
         if (intervals.length === 0) {
           setStatus("当前日期没有可视化交集区间");
           renderStats([`日期 ${date} 无区间`]);
+          renderPtbMeta(["PTB 点数: 0", "PTB 方法: -", "最新 PTB: -", "最新 PTB 时间: -"]);
           return;
         }
         if (autoSelectLast) {
@@ -603,6 +726,7 @@
           if (dates.length === 0) {
             setStatus("未找到 logs/raw 下的日期数据");
             renderStats(["请先运行采集器生成数据"]);
+            renderPtbMeta(["PTB 点数: 0", "PTB 方法: -", "最新 PTB: -", "最新 PTB 时间: -"]);
             return;
           }
           dateSelect.value = dates[0];

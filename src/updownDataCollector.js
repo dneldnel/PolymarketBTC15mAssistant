@@ -89,6 +89,7 @@ const TRACKED_FILE_NAMES = [
   "clob_market_ws.jsonl",
   "updown_state.jsonl",
   "btc_reference.jsonl",
+  "ptb_reference.jsonl",
   "market_lifecycle.jsonl",
   "collector_heartbeat.jsonl"
 ];
@@ -149,6 +150,114 @@ function padRight(s, width) {
   return text + " ".repeat(width - text.length);
 }
 
+function parseMarketWindowMsFromSlug(slug, fallbackMs = 5 * 60_000) {
+  const s = String(slug || "");
+  const m = s.match(/-(\d+)m-(\d{10})(?:$|[^0-9])/);
+  if (m) {
+    const mins = Number(m[1]);
+    if (Number.isFinite(mins) && mins > 0) return mins * 60_000;
+  }
+  const m2 = s.match(/-(\d+)m(?:$|[-_])/);
+  if (m2) {
+    const mins = Number(m2[1]);
+    if (Number.isFinite(mins) && mins > 0) return mins * 60_000;
+  }
+  return fallbackMs;
+}
+
+function floorToBucket(ms, bucketMs) {
+  return Math.floor(ms / bucketMs) * bucketMs;
+}
+
+function nextBucketBoundary(ms, bucketMs) {
+  return floorToBucket(ms, bucketMs) + bucketMs;
+}
+
+class PtbCalculator {
+  constructor({ bucketMs }) {
+    this.bucketMs = bucketMs;
+    this.prevTick = null;
+    this.nextBoundaryMs = null;
+    this.currentWindow = null; // { startMs, endMs, ptbPrice, ptbMethod }
+  }
+
+  setBucketMs(bucketMs) {
+    if (!Number.isFinite(bucketMs) || bucketMs <= 0) return;
+    if (bucketMs === this.bucketMs) return;
+    this.bucketMs = bucketMs;
+    this.reset();
+  }
+
+  reset() {
+    this.prevTick = null;
+    this.nextBoundaryMs = null;
+    this.currentWindow = null;
+  }
+
+  resetWithTick(tick) {
+    this.prevTick = tick;
+    this.nextBoundaryMs = nextBucketBoundary(tick.tsMs, this.bucketMs);
+    this.currentWindow = null;
+  }
+
+  onTick(tick) {
+    if (!tick || !Number.isFinite(tick.tsMs) || !Number.isFinite(tick.price)) return null;
+
+    if (!this.prevTick) {
+      this.resetWithTick(tick);
+      return null;
+    }
+
+    if (tick.tsMs < this.prevTick.tsMs) return null;
+
+    if (tick.tsMs - this.prevTick.tsMs > this.bucketMs * 2) {
+      this.resetWithTick(tick);
+      return null;
+    }
+
+    if (this.nextBoundaryMs === null) {
+      this.nextBoundaryMs = nextBucketBoundary(this.prevTick.tsMs, this.bucketMs);
+    }
+
+    let lastBoundaryEvent = null;
+
+    while (this.nextBoundaryMs <= tick.tsMs) {
+      const boundaryMs = this.nextBoundaryMs;
+      let method = null;
+      let price = null;
+
+      if (tick.tsMs === boundaryMs) {
+        method = "exact";
+        price = tick.price;
+      } else if (this.prevTick.tsMs < boundaryMs && tick.tsMs > boundaryMs) {
+        method = "avg";
+        price = (this.prevTick.price + tick.price) / 2;
+      }
+
+      if (price !== null) {
+        this.currentWindow = {
+          startMs: boundaryMs,
+          endMs: boundaryMs + this.bucketMs,
+          ptbPrice: price,
+          ptbMethod: method
+        };
+        lastBoundaryEvent = {
+          startMs: boundaryMs,
+          endMs: boundaryMs + this.bucketMs,
+          price,
+          method,
+          bucketMs: this.bucketMs
+        };
+      }
+
+      this.nextBoundaryMs += this.bucketMs;
+    }
+
+    this.prevTick = tick;
+    return lastBoundaryEvent;
+  }
+}
+
 function renderScreen(text) {
   try {
     readline.cursorTo(process.stdout, 0, 0);
@@ -179,7 +288,14 @@ function buildStatusScreen({
   clobWsReconnectCount,
   clobWsLastReconnectReason,
   pendingAggregateBuckets,
-  updownLastAgeMs
+  updownLastAgeMs,
+  ptbValue,
+  ptbMethod,
+  ptbWindowStartMs,
+  ptbWindowEndMs,
+  ptbWindowMs,
+  ptbAgeMs,
+  ptbDelta
 }) {
   const now = Date.now();
   const lines = [];
@@ -210,6 +326,13 @@ function buildStatusScreen({
   lines.push(`down_token_id:      ${activeMarket.downTokenId || "-"}`);
   lines.push(`btc_polymarket:     ${lastPolymarketPrice === null ? "-" : String(lastPolymarketPrice)}`);
   lines.push(`updown_age_ms:      ${updownLastAgeMs === null ? "-" : String(updownLastAgeMs)}`);
+  lines.push(`ptb_value:          ${ptbValue === null ? "-" : String(ptbValue)}`);
+  lines.push(`ptb_method:         ${ptbMethod || "-"}`);
+  lines.push(`ptb_window_start:   ${ptbWindowStartMs === null ? "-" : String(ptbWindowStartMs)}`);
+  lines.push(`ptb_window_end:     ${ptbWindowEndMs === null ? "-" : String(ptbWindowEndMs)}`);
+  lines.push(`ptb_window_ms:      ${ptbWindowMs === null ? "-" : String(ptbWindowMs)}`);
+  lines.push(`ptb_age_ms:         ${ptbAgeMs === null ? "-" : String(ptbAgeMs)}`);
+  lines.push(`ptb_delta:          ${ptbDelta === null ? "-" : String(ptbDelta)}`);
   lines.push("");
   lines.push("jsonl record counts");
   lines.push("------------------------------------------------------------");
@@ -758,6 +881,7 @@ async function main() {
   const flushGraceMs = 50;
   const aggregateMsRaw = Number(process.env.COLLECTOR_AGGREGATE_MS ?? 500);
   const aggregateMs = Number.isFinite(aggregateMsRaw) && aggregateMsRaw > 0 ? Math.floor(aggregateMsRaw) : 0;
+  const defaultPtbWindowMs = 5 * 60_000;
   const saveClobRaw = toBoolEnv(process.env.COLLECTOR_SAVE_CLOB_RAW, false);
   const clobNoDataAfterSwitchMs = Math.max(1000, Number(process.env.COLLECTOR_CLOB_NO_DATA_AFTER_SWITCH_MS || 4000));
   const clobStaleMs = Math.max(clobNoDataAfterSwitchMs, Number(process.env.COLLECTOR_CLOB_STALE_MS || 12000));
@@ -782,7 +906,10 @@ async function main() {
   let lastUpdownReceiveAtMs = 0;
   let lastMarketSwitchAtMs = 0;
   let lastClobRepairAtMs = 0;
+  let lastPtbAtMs = 0;
+  let lastPtbState = null;
   const aggregateBuckets = new Map();
+  const ptb = new PtbCalculator({ bucketMs: defaultPtbWindowMs });
 
   const resolveWindowId = (fallbackMs = Date.now()) => {
     if (partitionBy === "market_slug") {
@@ -987,6 +1114,38 @@ async function main() {
         receive_time_ms: now,
         price: tick.price
       }, now);
+
+      const tickTsMs = Number.isFinite(Number(tick.updatedAt)) ? Number(tick.updatedAt) : now;
+      const tickPrice = Number.isFinite(Number(tick.price)) ? Number(tick.price) : null;
+      if (tickPrice === null) return;
+
+      const ptbEvent = ptb.onTick({ tsMs: tickTsMs, price: tickPrice });
+      if (!ptbEvent) return;
+
+      writeWindowedJsonl("ptb_reference.jsonl", {
+        event_type: "ptb_update",
+        source: "polymarket_ws",
+        market_slug: activeMarket.slug || null,
+        market_id: activeMarket.id || null,
+        window_ms: ptbEvent.bucketMs,
+        window_start_ms: ptbEvent.startMs,
+        window_end_ms: ptbEvent.endMs,
+        ptb_price: ptbEvent.price,
+        ptb_method: ptbEvent.method,
+        boundary_ms: ptbEvent.startMs,
+        tick_ts_ms: tickTsMs,
+        receive_time_ms: now
+      }, now);
+
+      lastPtbAtMs = now;
+      lastPtbState = {
+        value: ptbEvent.price,
+        method: ptbEvent.method,
+        windowStartMs: ptbEvent.startMs,
+        windowEndMs: ptbEvent.endMs,
+        windowMs: ptbEvent.bucketMs,
+        receiveTimeMs: now
+      };
     },
     onStatus(status) {
       liveWsConnected = Boolean(status?.connected);
@@ -1031,6 +1190,9 @@ async function main() {
       const prevWindowId = normalizeDirName(prevMarket.slug) || unassignedDir;
       flushAggregation(Date.now(), true);
       activeMarket = { slug, id, upTokenId, downTokenId };
+      ptb.setBucketMs(parseMarketWindowMsFromSlug(slug, defaultPtbWindowMs));
+      lastPtbAtMs = 0;
+      lastPtbState = null;
       lastMarketSwitchAtMs = Date.now();
       lastUpdownReceiveAtMs = 0;
       clobStream.clearState();
@@ -1112,6 +1274,9 @@ async function main() {
     const now = Date.now();
     const windowId = resolveWindowId(now);
     const outputWindowDir = resolveWindowDir(now, windowId);
+    const ptbDelta = Number.isFinite(lastPolymarketPrice) && Number.isFinite(lastPtbState?.value)
+      ? lastPolymarketPrice - lastPtbState.value
+      : null;
     const text = buildStatusScreen({
       outputRoot,
       outputWindowDir,
@@ -1132,7 +1297,14 @@ async function main() {
       clobWsReconnectCount,
       clobWsLastReconnectReason,
       pendingAggregateBuckets: aggregateBuckets.size,
-      updownLastAgeMs: lastUpdownReceiveAtMs > 0 ? Math.max(0, now - lastUpdownReceiveAtMs) : null
+      updownLastAgeMs: lastUpdownReceiveAtMs > 0 ? Math.max(0, now - lastUpdownReceiveAtMs) : null,
+      ptbValue: Number.isFinite(lastPtbState?.value) ? lastPtbState.value : null,
+      ptbMethod: lastPtbState?.method || null,
+      ptbWindowStartMs: Number.isFinite(lastPtbState?.windowStartMs) ? lastPtbState.windowStartMs : null,
+      ptbWindowEndMs: Number.isFinite(lastPtbState?.windowEndMs) ? lastPtbState.windowEndMs : null,
+      ptbWindowMs: Number.isFinite(lastPtbState?.windowMs) ? lastPtbState.windowMs : null,
+      ptbAgeMs: lastPtbAtMs > 0 ? Math.max(0, now - lastPtbAtMs) : null,
+      ptbDelta
     });
     renderScreen(text);
   }, screenRefreshMs);
@@ -1144,6 +1316,9 @@ async function main() {
     const now = Date.now();
     const windowId = resolveWindowId(now);
     const outputWindowDir = resolveWindowDir(now, windowId);
+    const ptbDelta = Number.isFinite(lastPolymarketPrice) && Number.isFinite(lastPtbState?.value)
+      ? lastPolymarketPrice - lastPtbState.value
+      : null;
     renderScreen(
       buildStatusScreen({
         outputRoot,
@@ -1165,7 +1340,14 @@ async function main() {
         clobWsReconnectCount,
         clobWsLastReconnectReason,
         pendingAggregateBuckets: aggregateBuckets.size,
-        updownLastAgeMs: lastUpdownReceiveAtMs > 0 ? Math.max(0, now - lastUpdownReceiveAtMs) : null
+        updownLastAgeMs: lastUpdownReceiveAtMs > 0 ? Math.max(0, now - lastUpdownReceiveAtMs) : null,
+        ptbValue: Number.isFinite(lastPtbState?.value) ? lastPtbState.value : null,
+        ptbMethod: lastPtbState?.method || null,
+        ptbWindowStartMs: Number.isFinite(lastPtbState?.windowStartMs) ? lastPtbState.windowStartMs : null,
+        ptbWindowEndMs: Number.isFinite(lastPtbState?.windowEndMs) ? lastPtbState.windowEndMs : null,
+        ptbWindowMs: Number.isFinite(lastPtbState?.windowMs) ? lastPtbState.windowMs : null,
+        ptbAgeMs: lastPtbAtMs > 0 ? Math.max(0, now - lastPtbAtMs) : null,
+        ptbDelta
       })
     );
   }

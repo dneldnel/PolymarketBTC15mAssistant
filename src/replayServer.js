@@ -120,12 +120,14 @@ function windowFilesForDate(date, windowId = "") {
     const winDir = path.join(dayDir, windowId);
     return {
       updownPath: path.join(winDir, "updown_state.jsonl"),
-      btcPath: path.join(winDir, "btc_reference.jsonl")
+      btcPath: path.join(winDir, "btc_reference.jsonl"),
+      ptbPath: path.join(winDir, "ptb_reference.jsonl")
     };
   }
   return {
     updownPath: path.join(dayDir, "updown_state.jsonl"),
-    btcPath: path.join(dayDir, "btc_reference.jsonl")
+    btcPath: path.join(dayDir, "btc_reference.jsonl"),
+    ptbPath: path.join(dayDir, "ptb_reference.jsonl")
   };
 }
 
@@ -358,8 +360,9 @@ async function buildSeries(startMs, endMs, marketSlug = "", windowId = "", dateH
 }
 
 async function buildSeriesFromWindowDir(date, windowId, startMs, endMs) {
-  const { updownPath, btcPath } = windowFilesForDate(date, windowId);
+  const { updownPath, btcPath, ptbPath } = windowFilesForDate(date, windowId);
   const btc = [];
+  const ptb = [];
   const up = [];
   const down = [];
 
@@ -385,14 +388,33 @@ async function buildSeriesFromWindowDir(date, windowId, startMs, endMs) {
     if (side === "down") down.push(point);
   });
 
+  await eachJsonl(ptbPath, (row) => {
+    const ts = isFiniteNumber(row?.tick_ts_ms) ??
+      isFiniteNumber(row?.boundary_ms) ??
+      isFiniteNumber(row?.window_start_ms) ??
+      isFiniteNumber(row?.receive_time_ms);
+    const price = isFiniteNumber(row?.ptb_price);
+    if (ts === null || price === null) return;
+    if (ts < startMs || ts > endMs) return;
+    ptb.push([
+      ts,
+      price,
+      String(row?.ptb_method || ""),
+      isFiniteNumber(row?.window_start_ms),
+      isFiniteNumber(row?.window_end_ms)
+    ]);
+  });
+
   btc.sort((a, b) => a[0] - b[0]);
+  ptb.sort((a, b) => a[0] - b[0]);
   up.sort((a, b) => a[0] - b[0]);
   down.sort((a, b) => a[0] - b[0]);
-  return { btc, up, down };
+  return { btc, ptb, up, down };
 }
 
 async function buildSeriesLegacy(startMs, endMs, marketSlug = "") {
   const btc = [];
+  const ptb = [];
   const up = [];
   const down = [];
 
@@ -400,6 +422,7 @@ async function buildSeriesLegacy(startMs, endMs, marketSlug = "") {
     const dayDir = path.join(LOG_ROOT, date);
     const btcPath = path.join(dayDir, "btc_reference.jsonl");
     const updownPath = path.join(dayDir, "updown_state.jsonl");
+    const ptbPath = path.join(dayDir, "ptb_reference.jsonl");
 
     await eachJsonl(btcPath, (row) => {
       const ts = toTimeMs(row);
@@ -423,13 +446,33 @@ async function buildSeriesLegacy(startMs, endMs, marketSlug = "") {
       if (side === "up") up.push(point);
       if (side === "down") down.push(point);
     });
+
+    await eachJsonl(ptbPath, (row) => {
+      const ts = isFiniteNumber(row?.tick_ts_ms) ??
+        isFiniteNumber(row?.boundary_ms) ??
+        isFiniteNumber(row?.window_start_ms) ??
+        isFiniteNumber(row?.receive_time_ms);
+      const price = isFiniteNumber(row?.ptb_price);
+      const slug = String(row?.market_slug || "");
+      if (ts === null || price === null) return;
+      if (ts < startMs || ts > endMs) return;
+      if (marketSlug && slug && slug !== marketSlug) return;
+      ptb.push([
+        ts,
+        price,
+        String(row?.ptb_method || ""),
+        isFiniteNumber(row?.window_start_ms),
+        isFiniteNumber(row?.window_end_ms)
+      ]);
+    });
   }
 
   btc.sort((a, b) => a[0] - b[0]);
+  ptb.sort((a, b) => a[0] - b[0]);
   up.sort((a, b) => a[0] - b[0]);
   down.sort((a, b) => a[0] - b[0]);
 
-  return { btc, up, down };
+  return { btc, ptb, up, down };
 }
 
 function writeJson(res, code, payload) {

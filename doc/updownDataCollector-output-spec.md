@@ -17,6 +17,7 @@ logs/raw/
       clob_market_ws.jsonl
       updown_state.jsonl
       btc_reference.jsonl
+      ptb_reference.jsonl
       market_lifecycle.jsonl
       collector_heartbeat.jsonl
 ```
@@ -120,7 +121,41 @@ logs/raw/
 {"event_type":"btc_tick","source":"polymarket_ws","event_time_ms":1771427109000,"receive_time_ms":1771427109841,"price":67447.23261210248}
 ```
 
-## 3.4 `market_lifecycle.jsonl`
+## 3.4 `ptb_reference.jsonl`
+
+用途：保存 Price To Beat（PTB）边界更新事件（仅在 PTB 有效更新时写入）。
+
+PTB 计算口径（与 `terminal.js` 一致）：
+
+- 输入：`polymarket_ws` BTC tick
+- 规则：
+  - 边界命中时 `exact`
+  - 跨边界时 `avg = (prev_tick.price + tick.price) / 2`
+  - 大断档（`tick_gap > 2 * window_ms`）重置计算器
+- 窗口长度：从 `market_slug` 解析 `-<N>m-`（例如 `5m` / `15m`），解析失败默认 `5m`
+
+字段：
+
+- `event_type` `string`：固定为 `ptb_update`
+- `source` `string`：固定为 `polymarket_ws`
+- `market_slug` `string|null`
+- `market_id` `string|null`
+- `window_ms` `number`
+- `window_start_ms` `number`
+- `window_end_ms` `number`
+- `ptb_price` `number`
+- `ptb_method` `string`：`exact` 或 `avg`
+- `boundary_ms` `number`：等于 `window_start_ms`
+- `tick_ts_ms` `number`：触发本次 PTB 的 tick 时间
+- `receive_time_ms` `number`：本机接收时间
+
+示例：
+
+```json
+{"event_type":"ptb_update","source":"polymarket_ws","market_slug":"btc-updown-5m-1771427100","market_id":"1389001","window_ms":300000,"window_start_ms":1771427100000,"window_end_ms":1771427400000,"ptb_price":67442.11,"ptb_method":"avg","boundary_ms":1771427100000,"tick_ts_ms":1771427100123,"receive_time_ms":1771427100188}
+```
+
+## 3.5 `market_lifecycle.jsonl`
 
 用途：记录采集器生命周期与市场切换事件。
 
@@ -147,7 +182,7 @@ logs/raw/
 {"event_type":"market_switch","receive_time_ms":1771426522099,"market_slug":"btc-updown-5m-1771426500","market_id":"1389012","up_token_id":"5486...","down_token_id":"9953...","prev_market_slug":"btc-updown-5m-1771426200","prev_market_id":"1389009","prev_up_token_id":"4938...","prev_down_token_id":"4648...","next_market_slug":"btc-updown-5m-1771426500","next_market_id":"1389012","next_up_token_id":"5486...","next_down_token_id":"9953..."}
 ```
 
-## 3.5 `collector_heartbeat.jsonl`
+## 3.6 `collector_heartbeat.jsonl`
 
 用途：周期性心跳（默认每 5 秒）。
 
@@ -185,4 +220,3 @@ logs/raw/
 - `updown_state` 分桶规则：
   - `bucket_start_ms = floor(event_time_ms / AGG_MS) * AGG_MS`
   - `bucket_end_ms = bucket_start_ms + AGG_MS`
-
