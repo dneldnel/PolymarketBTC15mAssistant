@@ -2,15 +2,45 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import readline from "node:readline";
+import crypto from "node:crypto";
 import { URL, fileURLToPath } from "node:url";
+import {
+  analyzeWindows,
+  DEFAULT_PATTERN_CONFIG,
+  deriveWindowPatternInfo,
+  normalizePatternConfig,
+  PATTERN_PRIORITY,
+  stableStringify,
+  toPrice as toPatternPrice,
+  toUpdownPointTimeMs as toPatternTimeMs
+} from "./scripts/patterns5mCore.js";
 
 const PORT = Math.max(1, Number(process.env.REPLAY_PORT || 8787));
 const HOST = process.env.REPLAY_HOST || "0.0.0.0";
 const LOG_ROOT = path.resolve(process.cwd(), process.env.COLLECTOR_OUTPUT_DIR || "./logs/raw");
+const DERIVED_PATTERN_ROOT = path.resolve(
+  process.cwd(),
+  process.env.REPLAY_PATTERN_DERIVED_DIR || "./logs/derived/patterns"
+);
+const PATTERN_CONFIG_PATH = path.resolve(
+  process.cwd(),
+  process.env.REPLAY_PATTERN_CONFIG_PATH || "./config/patterns5m.json"
+);
 const DOC_ROOT = path.resolve(process.cwd(), "./docs");
 const BUCKET_MS = 5 * 60 * 1000;
 const MARKET_WINDOW_MS = 5 * 60 * 1000;
 const COMPLETE_MIN_MS = 4 * 60 * 1000;
+const PATTERN_STORE_SCHEMA_VERSION = 1;
+const PATTERN_CACHE = new Map();
+const PATTERN_CONFIG_CACHE = {
+  signature: "",
+  value: normalizePatternConfig(DEFAULT_PATTERN_CONFIG),
+  hash: crypto.createHash("sha256").update(
+    stableStringify(normalizePatternConfig(DEFAULT_PATTERN_CONFIG))
+  ).digest("hex"),
+  patternSetVersion: normalizePatternConfig(DEFAULT_PATTERN_CONFIG).patternSetVersion || "1",
+  sourcePath: PATTERN_CONFIG_PATH
+};
 
 function isFiniteNumber(x) {
   const n = typeof x === "string" ? Number(x) : x;
@@ -38,6 +68,14 @@ function datePartUtc(ms) {
 
 function isDateDirName(name) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(name || ""));
+}
+
+function toBoolParam(raw, defaultValue = false) {
+  if (raw === null || raw === undefined || raw === "") return defaultValue;
+  const s = String(raw).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
+  if (["0", "false", "no", "n", "off"].includes(s)) return false;
+  return defaultValue;
 }
 
 function listDateDirs() {
@@ -102,6 +140,195 @@ function listWindowIdsForDate(date) {
   return out;
 }
 
+function statSignature(filePath) {
+  if (!fs.existsSync(filePath)) return `${filePath}:missing`;
+  const st = fs.statSync(filePath);
+  return `${filePath}:${st.size}:${Math.floor(st.mtimeMs)}`;
+}
+
+function ensurePatternDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function fileStatSignature(filePath) {
+  if (!fs.existsSync(filePath)) return `${filePath}:missing`;
+  const st = fs.statSync(filePath);
+  return `${filePath}:${st.size}:${Math.floor(st.mtimeMs)}`;
+}
+
+function normalizePatternIdList(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const x of list) {
+    const key = String(x || "");
+    if (!PATTERN_PRIORITY.includes(key)) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+function emptyPatternSideHits() {
+  return Object.fromEntries(PATTERN_PRIORITY.map((k) => [k, []]));
+}
+
+function emptyPatternInfo() {
+  return {
+    patterns: [],
+    patternPrimary: null,
+    patternSideHits: emptyPatternSideHits()
+  };
+}
+
+function normalizePatternInfo(raw) {
+  if (!raw || typeof raw !== "object") return emptyPatternInfo();
+  const patternSideHits = emptyPatternSideHits();
+  for (const k of PATTERN_PRIORITY) {
+    const arr = Array.isArray(raw?.patternSideHits?.[k]) ? raw.patternSideHits[k] : [];
+    patternSideHits[k] = arr.map((item) => {
+      const side = String(item?.side || "").toLowerCase();
+      return {
+        side: side === "down" ? "down" : "up",
+        metrics: item?.metrics && typeof item.metrics === "object" ? item.metrics : null
+      };
+    });
+  }
+  const patterns = normalizePatternIdList(raw.patterns);
+  const primary = patterns.includes(raw.patternPrimary) ? raw.patternPrimary : (patterns[0] || null);
+  return {
+    patterns,
+    patternPrimary: primary,
+    patternSideHits
+  };
+}
+
+function sanitizeStorePart(value, fallback = "na") {
+  const out = String(value || "").trim().replace(/[^a-zA-Z0-9._-]+/g, "_");
+  return out || fallback;
+}
+
+function resolvePatternConfigState() {
+  const signature = fileStatSignature(PATTERN_CONFIG_PATH);
+  if (PATTERN_CONFIG_CACHE.signature === signature && PATTERN_CONFIG_CACHE.hash) {
+    return {
+      value: PATTERN_CONFIG_CACHE.value,
+      hash: PATTERN_CONFIG_CACHE.hash,
+      patternSetVersion: PATTERN_CONFIG_CACHE.patternSetVersion,
+      sourcePath: PATTERN_CONFIG_CACHE.sourcePath
+    };
+  }
+
+  let raw = DEFAULT_PATTERN_CONFIG;
+  if (fs.existsSync(PATTERN_CONFIG_PATH)) {
+    try {
+      raw = JSON.parse(fs.readFileSync(PATTERN_CONFIG_PATH, "utf8"));
+    } catch {
+      raw = DEFAULT_PATTERN_CONFIG;
+    }
+  }
+  const value = normalizePatternConfig(raw);
+  const hash = crypto.createHash("sha256").update(stableStringify(value)).digest("hex");
+  const patternSetVersion = String(value?.patternSetVersion || "1");
+
+  PATTERN_CONFIG_CACHE.signature = signature;
+  PATTERN_CONFIG_CACHE.value = value;
+  PATTERN_CONFIG_CACHE.hash = hash;
+  PATTERN_CONFIG_CACHE.patternSetVersion = patternSetVersion;
+  PATTERN_CONFIG_CACHE.sourcePath = PATTERN_CONFIG_PATH;
+
+  return {
+    value,
+    hash,
+    patternSetVersion,
+    sourcePath: PATTERN_CONFIG_PATH
+  };
+}
+
+function getIntervalPatternKey(interval) {
+  const raw = String(interval?.windowId || interval?.marketSlug || "").trim();
+  if (raw) return raw;
+  const startMs = Number(isFiniteNumber(interval?.startMs) ?? -1);
+  const endMs = Number(isFiniteNumber(interval?.endMs) ?? -1);
+  return `window-${startMs}-${endMs}`;
+}
+
+function getPatternStorePath(date, includeIncomplete, patternSetVersion, paramsHash) {
+  const datePart = sanitizeStorePart(`date=${date}`);
+  const includePart = includeIncomplete ? "1" : "0";
+  const setPart = sanitizeStorePart(patternSetVersion, "1");
+  const hashPart = sanitizeStorePart(paramsHash, "hash");
+  return path.join(
+    DERIVED_PATTERN_ROOT,
+    datePart,
+    `patterns_inc-${includePart}_set-${setPart}_hash-${hashPart}.json`
+  );
+}
+
+function readPatternStore(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (!parsed || typeof parsed !== "object") return null;
+    if (Number(parsed.schemaVersion) !== PATTERN_STORE_SCHEMA_VERSION) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writePatternStore(filePath, payload) {
+  ensurePatternDir(path.dirname(filePath));
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2));
+  fs.renameSync(tmpPath, filePath);
+}
+
+function buildPatternSummary(intervals, byWindowId, includeIncomplete) {
+  const summary = Object.fromEntries(PATTERN_PRIORITY.map((k) => [k, { windowCount: 0 }]));
+  let countedWindows = 0;
+
+  for (const interval of intervals) {
+    if (!includeIncomplete && !interval.isComplete) continue;
+    countedWindows += 1;
+    const key = getIntervalPatternKey(interval);
+    const info = byWindowId.get(key) || emptyPatternInfo();
+    for (const patternId of info.patterns || []) {
+      if (!summary[patternId]) continue;
+      summary[patternId].windowCount += 1;
+    }
+  }
+
+  return {
+    ...summary,
+    countedWindows,
+    includeIncomplete
+  };
+}
+
+function computeDayPatternSignature(date) {
+  const dayDir = path.join(LOG_ROOT, date);
+  if (!fs.existsSync(dayDir)) return `${date}:missing`;
+  const parts = [statSignature(dayDir)];
+  const partitioned = hasPartitionedWindowDirs(date);
+
+  if (partitioned) {
+    const windows = listWindowIdsForDate(date);
+    for (const windowId of windows) {
+      const { updownPath, btcPath } = windowFilesForDate(date, windowId);
+      parts.push(statSignature(path.join(dayDir, windowId)));
+      parts.push(statSignature(updownPath));
+      parts.push(statSignature(btcPath));
+    }
+  } else {
+    const { updownPath, btcPath } = windowFilesForDate(date, "");
+    parts.push(statSignature(updownPath));
+    parts.push(statSignature(btcPath));
+  }
+  return crypto.createHash("sha256").update(parts.join("|")).digest("hex");
+}
+
 function hasPartitionedWindowDirs(date) {
   const dayDir = path.join(LOG_ROOT, date);
   if (!fs.existsSync(dayDir)) return false;
@@ -134,11 +361,11 @@ function windowFilesForDate(date, windowId = "") {
 function formatIntervalLabel(startMs, endMs) {
   const start = new Date(startMs);
   const end = new Date(endMs);
-  const date = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
-  const hh1 = String(start.getHours()).padStart(2, "0");
-  const mm1 = String(start.getMinutes()).padStart(2, "0");
-  const hh2 = String(end.getHours()).padStart(2, "0");
-  const mm2 = String(end.getMinutes()).padStart(2, "0");
+  const date = `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}-${String(start.getUTCDate()).padStart(2, "0")}`;
+  const hh1 = String(start.getUTCHours()).padStart(2, "0");
+  const mm1 = String(start.getUTCMinutes()).padStart(2, "0");
+  const hh2 = String(end.getUTCHours()).padStart(2, "0");
+  const mm2 = String(end.getUTCMinutes()).padStart(2, "0");
   return `${date} ${hh1}:${mm1} - ${hh2}:${mm2}`;
 }
 
@@ -211,7 +438,8 @@ async function buildIntervalsFromWindowDirs(date) {
     if (startMs === null || endMs === null) continue;
     if (endMs <= startMs) endMs = startMs + (parseMarketWindowMsFromSlug(marketSlug) ?? MARKET_WINDOW_MS);
 
-    if (!(btcPoints > 0 && (upPoints > 0 || downPoints > 0))) continue;
+    const hasOdds = upPoints > 0 || downPoints > 0;
+    if (!(btcPoints > 0 && hasOdds)) continue;
 
     const btcCoverageMs = btcMinMs !== null && btcMaxMs !== null ? (btcMaxMs - btcMinMs) : 0;
     const upCoverageMs = upMinMs !== null && upMaxMs !== null ? (upMaxMs - upMinMs) : 0;
@@ -229,6 +457,8 @@ async function buildIntervalsFromWindowDirs(date) {
       downPoints,
       upSampleCount,
       downSampleCount,
+      hasBtc: btcPoints > 0,
+      hasOdds,
       btcCoverageMs,
       upCoverageMs,
       downCoverageMs,
@@ -321,6 +551,8 @@ async function buildIntervalsLegacy(date, bucketMs = BUCKET_MS) {
       return {
         windowId: x.marketSlug || "",
         ...x,
+        hasBtc: x.btcPoints > 0,
+        hasOdds: x.upPoints > 0 || x.downPoints > 0,
         btcCoverageMs,
         upCoverageMs,
         downCoverageMs,
@@ -329,6 +561,330 @@ async function buildIntervalsLegacy(date, bucketMs = BUCKET_MS) {
         label: formatIntervalLabel(x.startMs, x.endMs)
       };
     });
+}
+
+function getIntervalSourceSignature(date, interval, partitioned) {
+  const key = getIntervalPatternKey(interval);
+  const parts = [
+    key,
+    String(isFiniteNumber(interval.startMs) ?? ""),
+    String(isFiniteNumber(interval.endMs) ?? ""),
+    String(Boolean(interval.isComplete)),
+    String(isFiniteNumber(interval.btcCoverageMs) ?? 0),
+    String(isFiniteNumber(interval.oddsCoverageMs) ?? 0),
+    String(isFiniteNumber(interval.upCoverageMs) ?? 0),
+    String(isFiniteNumber(interval.downCoverageMs) ?? 0)
+  ];
+  if (partitioned) {
+    const { updownPath, btcPath } = windowFilesForDate(date, String(interval.windowId || key));
+    parts.push(statSignature(updownPath));
+    parts.push(statSignature(btcPath));
+  } else {
+    const { updownPath, btcPath } = windowFilesForDate(date, "");
+    parts.push(statSignature(updownPath));
+    parts.push(statSignature(btcPath));
+  }
+  return parts.join("|");
+}
+
+async function loadSidePointsForInterval(date, interval, partitioned) {
+  const sidePoints = { up: [], down: [] };
+  if (partitioned) {
+    const key = String(interval.windowId || getIntervalPatternKey(interval));
+    const { updownPath } = windowFilesForDate(date, key);
+    await eachJsonl(updownPath, (row) => {
+      const side = String(row?.side || "").toLowerCase();
+      if (side !== "up" && side !== "down") return;
+      const ts = toPatternTimeMs(row);
+      const price = toPatternPrice(row);
+      if (ts === null || price === null) return;
+      sidePoints[side].push({ ts, price });
+    });
+    return sidePoints;
+  }
+
+  const { updownPath } = windowFilesForDate(date, "");
+  const slugFilter = String(interval.marketSlug || "").trim();
+  const startMs = isFiniteNumber(interval.startMs);
+  const endMs = isFiniteNumber(interval.endMs);
+  await eachJsonl(updownPath, (row) => {
+    const side = String(row?.side || "").toLowerCase();
+    if (side !== "up" && side !== "down") return;
+    const ts = toPatternTimeMs(row);
+    const price = toPatternPrice(row);
+    if (ts === null || price === null) return;
+    const slug = String(row?.market_slug || "").trim();
+    if (slugFilter) {
+      if (slug !== slugFilter) return;
+    } else if (startMs !== null && endMs !== null && (ts < startMs || ts > endMs)) {
+      return;
+    }
+    sidePoints[side].push({ ts, price });
+  });
+  return sidePoints;
+}
+
+async function computePatternInfoForInterval(
+  date,
+  interval,
+  includeIncomplete,
+  patternConfig,
+  partitioned
+) {
+  if (!includeIncomplete && !interval.isComplete) return emptyPatternInfo();
+  const key = getIntervalPatternKey(interval);
+  const sidePoints = await loadSidePointsForInterval(date, interval, partitioned);
+  const window = {
+    date,
+    windowId: key,
+    marketSlug: String(interval.marketSlug || key),
+    startMs: interval.startMs,
+    endMs: interval.endMs,
+    sidePoints,
+    btcPoints: [],
+    coverage: {
+      upCoverageMs: interval.upCoverageMs || 0,
+      downCoverageMs: interval.downCoverageMs || 0,
+      oddsCoverageMs: interval.oddsCoverageMs || 0,
+      btcCoverageMs: interval.btcCoverageMs || 0
+    },
+    isComplete: Boolean(interval.isComplete)
+  };
+  const analyzed = analyzeWindows([window], true, null, patternConfig);
+  return normalizePatternInfo(deriveWindowPatternInfo(window, analyzed.hits));
+}
+
+function evictPatternCacheIfNeeded(maxSize = 32) {
+  while (PATTERN_CACHE.size > maxSize) {
+    const firstKey = PATTERN_CACHE.keys().next().value;
+    if (!firstKey) break;
+    PATTERN_CACHE.delete(firstKey);
+  }
+}
+
+async function buildPatternIndexByScan(date, intervals, includeIncomplete, patternConfig) {
+  const partitioned = hasPartitionedWindowDirs(date);
+  const sidePointsByWindowId = new Map();
+
+  if (partitioned) {
+    for (const interval of intervals) {
+      const key = getIntervalPatternKey(interval);
+      const { updownPath } = windowFilesForDate(date, String(interval.windowId || key));
+      const sidePoints = { up: [], down: [] };
+      await eachJsonl(updownPath, (row) => {
+        const side = String(row?.side || "").toLowerCase();
+        if (side !== "up" && side !== "down") return;
+        const ts = toPatternTimeMs(row);
+        const price = toPatternPrice(row);
+        if (ts === null || price === null) return;
+        sidePoints[side].push({ ts, price });
+      });
+      sidePointsByWindowId.set(key, sidePoints);
+    }
+  } else {
+    const { updownPath } = windowFilesForDate(date, "");
+    const sidePointsBySlug = new Map();
+    await eachJsonl(updownPath, (row) => {
+      const slug = String(row?.market_slug || "").trim();
+      if (!slug) return;
+      const side = String(row?.side || "").toLowerCase();
+      if (side !== "up" && side !== "down") return;
+      const ts = toPatternTimeMs(row);
+      const price = toPatternPrice(row);
+      if (ts === null || price === null) return;
+      let sidePoints = sidePointsBySlug.get(slug);
+      if (!sidePoints) {
+        sidePoints = { up: [], down: [] };
+        sidePointsBySlug.set(slug, sidePoints);
+      }
+      sidePoints[side].push({ ts, price });
+    });
+    for (const interval of intervals) {
+      const key = getIntervalPatternKey(interval);
+      sidePointsByWindowId.set(key, sidePointsBySlug.get(String(interval.marketSlug || "")) || { up: [], down: [] });
+    }
+  }
+
+  const windows = intervals.map((interval) => {
+    const key = getIntervalPatternKey(interval);
+    const sidePoints = sidePointsByWindowId.get(key) || { up: [], down: [] };
+    return {
+      date,
+      windowId: key,
+      marketSlug: String(interval.marketSlug || key),
+      startMs: interval.startMs,
+      endMs: interval.endMs,
+      sidePoints,
+      btcPoints: [],
+      coverage: {
+        upCoverageMs: interval.upCoverageMs || 0,
+        downCoverageMs: interval.downCoverageMs || 0,
+        oddsCoverageMs: interval.oddsCoverageMs || 0,
+        btcCoverageMs: interval.btcCoverageMs || 0
+      },
+      isComplete: Boolean(interval.isComplete)
+    };
+  });
+
+  const analyzed = analyzeWindows(windows, includeIncomplete, null, patternConfig);
+  const byWindowId = new Map();
+  for (const window of windows) {
+    byWindowId.set(window.windowId || window.marketSlug, normalizePatternInfo(deriveWindowPatternInfo(window, analyzed.hits)));
+  }
+  return {
+    byWindowId,
+    summary: buildPatternSummary(intervals, byWindowId, includeIncomplete)
+  };
+}
+
+async function buildPatternIndexForDate(date, intervals, includeIncomplete = false) {
+  const daySignature = computeDayPatternSignature(date);
+  const patternConfigState = resolvePatternConfigState();
+  const cacheKey = `${date}|${includeIncomplete ? "1" : "0"}|${patternConfigState.hash}|${daySignature}`;
+  const cached = PATTERN_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  const partitioned = hasPartitionedWindowDirs(date);
+  if (!partitioned) {
+    const fallback = await buildPatternIndexByScan(
+      date,
+      intervals,
+      includeIncomplete,
+      patternConfigState.value
+    );
+    PATTERN_CACHE.set(cacheKey, fallback);
+    evictPatternCacheIfNeeded();
+    return fallback;
+  }
+
+  const byWindowId = new Map();
+  const storePath = getPatternStorePath(
+    date,
+    includeIncomplete,
+    patternConfigState.patternSetVersion,
+    patternConfigState.hash
+  );
+  const existingStore = readPatternStore(storePath);
+  const existingWindows = existingStore?.windows && typeof existingStore.windows === "object"
+    ? existingStore.windows
+    : {};
+  const nextWindows = {};
+  let storeChanged = !existingStore;
+
+  for (const interval of intervals) {
+    const key = getIntervalPatternKey(interval);
+    const sourceSignature = getIntervalSourceSignature(date, interval, true);
+    const prev = existingWindows[key];
+    const canReuse = Boolean(
+      prev
+      && prev.sourceSignature === sourceSignature
+      && prev.paramsHash === patternConfigState.hash
+      && prev.patternSetVersion === patternConfigState.patternSetVersion
+      && Boolean(prev.includeIncomplete) === includeIncomplete
+    );
+
+    let record = null;
+    if (canReuse) {
+      record = prev;
+    } else {
+      const info = await computePatternInfoForInterval(
+        date,
+        interval,
+        includeIncomplete,
+        patternConfigState.value,
+        true
+      );
+      record = {
+        windowId: key,
+        marketSlug: String(interval.marketSlug || key),
+        windowStartMs: interval.startMs,
+        windowEndMs: interval.endMs,
+        isComplete: Boolean(interval.isComplete),
+        includeIncomplete,
+        sourceSignature,
+        patternSetVersion: patternConfigState.patternSetVersion,
+        paramsHash: patternConfigState.hash,
+        computedAtMs: Date.now(),
+        patterns: info.patterns,
+        patternPrimary: info.patternPrimary,
+        patternSideHits: info.patternSideHits
+      };
+      storeChanged = true;
+    }
+
+    nextWindows[key] = record;
+    byWindowId.set(key, normalizePatternInfo(record));
+  }
+
+  if (!storeChanged) {
+    const existingKeys = Object.keys(existingWindows).sort();
+    const nextKeys = Object.keys(nextWindows).sort();
+    if (existingKeys.length !== nextKeys.length) {
+      storeChanged = true;
+    } else {
+      for (let i = 0; i < existingKeys.length; i += 1) {
+        if (existingKeys[i] !== nextKeys[i]) {
+          storeChanged = true;
+          break;
+        }
+      }
+    }
+    if (
+      !storeChanged
+      && (
+        existingStore?.date !== date
+        || Boolean(existingStore?.includeIncomplete) !== includeIncomplete
+        || existingStore?.patternSetVersion !== patternConfigState.patternSetVersion
+        || existingStore?.paramsHash !== patternConfigState.hash
+        || existingStore?.daySignature !== daySignature
+      )
+    ) {
+      storeChanged = true;
+    }
+  }
+
+  if (storeChanged) {
+    const payload = {
+      schemaVersion: PATTERN_STORE_SCHEMA_VERSION,
+      date,
+      includeIncomplete,
+      patternSetVersion: patternConfigState.patternSetVersion,
+      paramsHash: patternConfigState.hash,
+      configPath: patternConfigState.sourcePath,
+      daySignature,
+      updatedAtMs: Date.now(),
+      windows: nextWindows
+    };
+    writePatternStore(storePath, payload);
+  }
+
+  const value = {
+    summary: buildPatternSummary(intervals, byWindowId, includeIncomplete),
+    byWindowId
+  };
+  PATTERN_CACHE.set(cacheKey, value);
+  evictPatternCacheIfNeeded();
+  return value;
+}
+
+async function buildIntervalsWithPatterns(date, includeIncomplete = false) {
+  const intervals = await buildIntervals(date, BUCKET_MS);
+  const patternIndex = await buildPatternIndexForDate(date, intervals, includeIncomplete);
+  const intervalsWithPatterns = intervals.map((interval) => {
+    const key = getIntervalPatternKey(interval);
+    const patternInfo = patternIndex.byWindowId.get(key) || emptyPatternInfo();
+    return {
+      ...interval,
+      patterns: patternInfo.patterns,
+      patternPrimary: patternInfo.patternPrimary,
+      patternSideHits: patternInfo.patternSideHits
+    };
+  });
+  return {
+    date,
+    intervals: intervalsWithPatterns,
+    patternSummary: patternIndex.summary
+  };
 }
 
 function dayRange(startMs, endMs) {
@@ -518,14 +1074,19 @@ function createReplayServer() {
 
       if (reqUrl.pathname === "/api/intervals") {
         const requestedDate = String(reqUrl.searchParams.get("date") || "");
+        const includeIncomplete = toBoolParam(reqUrl.searchParams.get("includeIncomplete"), false);
         const dates = listDateDirs();
         const date = isDateDirName(requestedDate) ? requestedDate : dates.at(-1);
         if (!date) {
-          writeJson(res, 200, { date: null, intervals: [] });
+          writeJson(res, 200, {
+            date: null,
+            intervals: [],
+            patternSummary: buildPatternSummary([], new Map(), includeIncomplete)
+          });
           return;
         }
-        const intervals = await buildIntervals(date, BUCKET_MS);
-        writeJson(res, 200, { date, intervals });
+        const payload = await buildIntervalsWithPatterns(date, includeIncomplete);
+        writeJson(res, 200, payload);
         return;
       }
 
@@ -596,6 +1157,7 @@ export {
   COMPLETE_MIN_MS,
   listDateDirs,
   buildIntervals,
+  buildIntervalsWithPatterns,
   buildSeries,
   createReplayServer,
   startReplayServer

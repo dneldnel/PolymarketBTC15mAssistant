@@ -1,27 +1,35 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-
-const FIVE_MIN_MS = 5 * 60 * 1000;
-const LAST_TWO_MIN_MS = 2 * 60 * 1000;
-const COMPLETE_MIN_MS = 4 * 60 * 1000;
+import crypto from "node:crypto";
+import {
+  DEFAULT_PATTERN_CONFIG,
+  FIVE_MIN_MS,
+  analyzeWindows,
+  finalizeWindow,
+  floorToBucket,
+  newWindow,
+  normalizePatternConfig,
+  parseMarketMeta,
+  stableStringify,
+  toBtcTimeMs,
+  toFiniteNumber,
+  toPrice,
+  toUpdownPointTimeMs
+} from "./patterns5mCore.js";
 
 function usage() {
   return [
     "Usage:",
-    "  node src/scripts/stats5mPatterns.js [--root <path>] [--date <YYYY-MM-DD>] [--include-incomplete] [--json]",
+    "  node src/scripts/stats5mPatterns.js [--root <path>] [--date <YYYY-MM-DD>] [--pattern-config <path>] [--include-incomplete] [--json]",
     "",
     "Options:",
     "  --root <path>           Log root (default: ./logs/raw)",
     "  --date <YYYY-MM-DD>     Limit to one date; repeatable",
+    "  --pattern-config <path> Pattern config JSON (default: ./config/patterns5m.json)",
     "  --include-incomplete    Include incomplete windows",
     "  --json                  Output JSON"
   ].join("\n");
-}
-
-function toFiniteNumber(x) {
-  const n = typeof x === "string" ? Number(x) : x;
-  return Number.isFinite(n) ? n : null;
 }
 
 function isDateDirName(name) {
@@ -32,6 +40,7 @@ function parseArgs(argv) {
   const args = {
     root: "./logs/raw",
     dates: [],
+    patternConfigPath: "./config/patterns5m.json",
     includeIncomplete: false,
     json: false
   };
@@ -55,6 +64,13 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
+    if (cur === "--pattern-config") {
+      const next = argv[i + 1];
+      if (!next) throw new Error("--pattern-config requires a value");
+      args.patternConfigPath = next;
+      i += 1;
+      continue;
+    }
     if (cur === "--include-incomplete") {
       args.includeIncomplete = true;
       continue;
@@ -74,174 +90,6 @@ function parseArgs(argv) {
   return args;
 }
 
-function parseMarketMeta(value) {
-  const s = String(value || "");
-  const m = s.match(/btc-updown-(\d+)m-(\d{10})$/);
-  if (!m) return null;
-  const minutes = Number(m[1]);
-  const startSec = Number(m[2]);
-  if (!Number.isFinite(minutes) || !Number.isFinite(startSec) || minutes <= 0) return null;
-  const startMs = startSec * 1000;
-  return {
-    minutes,
-    windowMs: minutes * 60 * 1000,
-    startMs,
-    endMs: startMs + minutes * 60 * 1000
-  };
-}
-
-function toUpdownPointTimeMs(row) {
-  return toFiniteNumber(row?.bucket_end_ms)
-    ?? toFiniteNumber(row?.last_event_time_ms)
-    ?? toFiniteNumber(row?.event_time_ms)
-    ?? toFiniteNumber(row?.receive_time_ms);
-}
-
-function toBtcTimeMs(row) {
-  return toFiniteNumber(row?.event_time_ms) ?? toFiniteNumber(row?.receive_time_ms);
-}
-
-function toPrice(row) {
-  const lastTradePrice = toFiniteNumber(row?.last_trade_price);
-  const mid = toFiniteNumber(row?.mid);
-  const bestBid = toFiniteNumber(row?.best_bid);
-  const bestAsk = toFiniteNumber(row?.best_ask);
-  const eps = 1e-9;
-
-  // Prefer last_trade_price only when it is consistent with visible BBO.
-  if (lastTradePrice !== null) {
-    if (bestBid !== null && bestAsk !== null) {
-      const low = Math.min(bestBid, bestAsk) - eps;
-      const high = Math.max(bestBid, bestAsk) + eps;
-      if (lastTradePrice >= low && lastTradePrice <= high) return lastTradePrice;
-      return mid ?? null;
-    }
-    return lastTradePrice;
-  }
-
-  return mid;
-}
-
-function floorToBucket(ms, bucketMs) {
-  return Math.floor(ms / bucketMs) * bucketMs;
-}
-
-function sortPoints(points) {
-  points.sort((a, b) => a.ts - b.ts);
-}
-
-function computeCoverageMs(points) {
-  if (points.length <= 1) return 0;
-  return points[points.length - 1].ts - points[0].ts;
-}
-
-function evaluateLateVolatility(points) {
-  let highSeen = false;
-  for (const p of points) {
-    if (p.price >= 0.8) highSeen = true;
-    if (highSeen && p.price < 0.4) return true;
-  }
-  return false;
-}
-
-function computeMaxDrawdownAbs(points) {
-  let runningHigh = -Infinity;
-  let maxDd = 0;
-  for (const p of points) {
-    runningHigh = Math.max(runningHigh, p.price);
-    maxDd = Math.max(maxDd, runningHigh - p.price);
-  }
-  return maxDd;
-}
-
-function evaluateSidePatterns(points, windowStartMs, windowEndMs) {
-  const inWindow = points.filter((p) => p.ts >= windowStartMs && p.ts <= windowEndMs);
-  if (inWindow.length === 0) {
-    return {
-      hasData: false,
-      extremeReversal: false,
-      lateVolatility: false,
-      peacefulFinish: false,
-      metrics: null
-    };
-  }
-
-  sortPoints(inWindow);
-  const finalPrice = inWindow[inWindow.length - 1].price;
-  let fullMax = -Infinity;
-  for (const p of inWindow) fullMax = Math.max(fullMax, p.price);
-
-  const last2mStart = windowEndMs - LAST_TWO_MIN_MS;
-  const last2m = inWindow.filter((p) => p.ts >= last2mStart);
-  const last2mHigh = last2m.length > 0 ? Math.max(...last2m.map((x) => x.price)) : null;
-  const last2mLow = last2m.length > 0 ? Math.min(...last2m.map((x) => x.price)) : null;
-
-  const extremeReversal = fullMax >= 0.98 && finalPrice <= 0.01;
-  const lateVolatility = last2m.length > 0 ? evaluateLateVolatility(last2m) : false;
-  const maxDrawdownAbs = last2m.length > 0 ? computeMaxDrawdownAbs(last2m) : null;
-  const peacefulFinish = (
-    last2m.length > 0
-    && finalPrice >= 0.99
-    && maxDrawdownAbs !== null
-    && maxDrawdownAbs <= 0.1
-    && !lateVolatility
-  );
-
-  return {
-    hasData: true,
-    extremeReversal,
-    lateVolatility,
-    peacefulFinish,
-    metrics: {
-      maxPrice: fullMax,
-      finalPrice,
-      last2mHigh,
-      last2mLow,
-      maxDrawdownAbs
-    }
-  };
-}
-
-function newWindow(date, windowId, marketSlug, meta) {
-  return {
-    date,
-    windowId,
-    marketSlug,
-    startMs: meta.startMs,
-    endMs: meta.endMs,
-    sidePoints: {
-      up: [],
-      down: []
-    },
-    btcPoints: [],
-    coverage: {
-      upCoverageMs: 0,
-      downCoverageMs: 0,
-      oddsCoverageMs: 0,
-      btcCoverageMs: 0
-    },
-    isComplete: false
-  };
-}
-
-function finalizeWindow(window) {
-  sortPoints(window.sidePoints.up);
-  sortPoints(window.sidePoints.down);
-  sortPoints(window.btcPoints);
-
-  const upCoverageMs = computeCoverageMs(window.sidePoints.up);
-  const downCoverageMs = computeCoverageMs(window.sidePoints.down);
-  const oddsCoverageMs = Math.max(upCoverageMs, downCoverageMs);
-  const btcCoverageMs = computeCoverageMs(window.btcPoints);
-  const isComplete = btcCoverageMs >= COMPLETE_MIN_MS && oddsCoverageMs >= COMPLETE_MIN_MS;
-  window.coverage = {
-    upCoverageMs,
-    downCoverageMs,
-    oddsCoverageMs,
-    btcCoverageMs
-  };
-  window.isComplete = isComplete;
-}
 
 function createWarningTracker() {
   const counts = new Map();
@@ -258,6 +106,30 @@ function createWarningTracker() {
         samples
       };
     }
+  };
+}
+
+function loadPatternConfig(patternConfigPath, warnings) {
+  const resolvedPath = path.resolve(process.cwd(), patternConfigPath || "./config/patterns5m.json");
+  let raw = DEFAULT_PATTERN_CONFIG;
+  let source = "default";
+  if (fs.existsSync(resolvedPath)) {
+    source = resolvedPath;
+    try {
+      raw = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
+    } catch {
+      warnings.add("bad_pattern_config_json", resolvedPath);
+      raw = DEFAULT_PATTERN_CONFIG;
+      source = "default";
+    }
+  }
+  const config = normalizePatternConfig(raw);
+  const hash = crypto.createHash("sha256").update(stableStringify(config)).digest("hex");
+  return {
+    source,
+    path: source === "default" ? null : resolvedPath,
+    hash,
+    config
   };
 }
 
@@ -437,105 +309,23 @@ function formatUtcWindowRange(startMs, endMs) {
   return `${y}-${m}-${d} ${hh1}:${mm1}:${ss1} - ${hh2}:${mm2}:${ss2} UTC`;
 }
 
-function pushPatternHit(target, window, side, metrics) {
-  target.push({
-    date: window.date,
-    market_slug: window.marketSlug || window.windowId,
-    window_id: window.windowId,
-    window_start_ms: window.startMs,
-    window_end_ms: window.endMs,
-    side,
-    metrics
-  });
-}
-
-function sortHits(hits) {
-  hits.sort((a, b) => {
-    if (a.window_start_ms !== b.window_start_ms) return a.window_start_ms - b.window_start_ms;
-    if (a.market_slug !== b.market_slug) return a.market_slug.localeCompare(b.market_slug);
-    return a.side.localeCompare(b.side);
-  });
-}
-
-function analyzeWindows(windows, includeIncomplete, counters) {
-  const hits = {
-    extremeReversal: [],
-    lateVolatility: [],
-    peacefulFinish: []
-  };
-
-  let extremeWindowCount = 0;
-  let lateWindowCount = 0;
-  let peaceWindowCount = 0;
-
-  for (const window of windows) {
-    if (!includeIncomplete && !window.isComplete) continue;
-    counters.countedWindows += 1;
-
-    const sideResults = {
-      up: evaluateSidePatterns(window.sidePoints.up, window.startMs, window.endMs),
-      down: evaluateSidePatterns(window.sidePoints.down, window.startMs, window.endMs)
-    };
-
-    let hitExtreme = false;
-    let hitLate = false;
-    let hitPeace = false;
-
-    for (const side of ["up", "down"]) {
-      const result = sideResults[side];
-      if (!result.hasData || !result.metrics) continue;
-      if (result.extremeReversal) {
-        hitExtreme = true;
-        pushPatternHit(hits.extremeReversal, window, side, {
-          max_price: result.metrics.maxPrice,
-          final_price: result.metrics.finalPrice
-        });
-      }
-      if (result.lateVolatility) {
-        hitLate = true;
-        pushPatternHit(hits.lateVolatility, window, side, {
-          last2m_high: result.metrics.last2mHigh,
-          last2m_low: result.metrics.last2mLow,
-          final_price: result.metrics.finalPrice
-        });
-      }
-      if (result.peacefulFinish) {
-        hitPeace = true;
-        pushPatternHit(hits.peacefulFinish, window, side, {
-          final_price: result.metrics.finalPrice,
-          last2m_high: result.metrics.last2mHigh,
-          last2m_low: result.metrics.last2mLow,
-          max_drawdown_abs: result.metrics.maxDrawdownAbs
-        });
-      }
-    }
-
-    if (hitExtreme) extremeWindowCount += 1;
-    if (hitLate) lateWindowCount += 1;
-    if (hitPeace) peaceWindowCount += 1;
-  }
-
-  sortHits(hits.extremeReversal);
-  sortHits(hits.lateVolatility);
-  sortHits(hits.peacefulFinish);
-
-  return {
-    hits,
-    counts: {
-      extremeReversal: extremeWindowCount,
-      lateVolatility: lateWindowCount,
-      peacefulFinish: peaceWindowCount
-    }
-  };
-}
-
 function printConsoleResult(result) {
-  const { root, dates, includeIncomplete } = result.config;
+  const {
+    root,
+    dates,
+    includeIncomplete,
+    patternConfigSource,
+    patternSetVersion,
+    patternParamsHash
+  } = result.config;
   const c = result.counters;
   process.stdout.write("=== 5m Pattern Stats ===\n");
   process.stdout.write(`root: ${root}\n`);
   process.stdout.write(`dates: ${dates.join(", ") || "-"}\n`);
   process.stdout.write(`includeIncomplete: ${String(includeIncomplete)}\n`);
+  process.stdout.write(`patternConfig: ${patternConfigSource || "default"}\n`);
+  process.stdout.write(`patternSetVersion: ${patternSetVersion || "1"}\n`);
+  process.stdout.write(`patternParamsHash: ${patternParamsHash || "-"}\n`);
   process.stdout.write("\n");
   process.stdout.write(`scannedWindows: ${c.scannedWindows}\n`);
   process.stdout.write(`valid5mWindows: ${c.valid5mWindows}\n`);
@@ -607,6 +397,7 @@ async function main() {
   }
 
   const warnings = createWarningTracker();
+  const patternConfig = loadPatternConfig(args.patternConfigPath, warnings);
   const counters = {
     scannedWindows: 0,
     valid5mWindows: 0,
@@ -618,7 +409,14 @@ async function main() {
   if (dates.length === 0) dates = listDateDirs(root);
   if (dates.length === 0) {
     const emptyResult = {
-      config: { root, dates: [], includeIncomplete: args.includeIncomplete },
+      config: {
+        root,
+        dates: [],
+        includeIncomplete: args.includeIncomplete,
+        patternConfigSource: patternConfig.source,
+        patternSetVersion: patternConfig.config.patternSetVersion,
+        patternParamsHash: patternConfig.hash
+      },
       counters,
       patterns: {
         extremeReversal: { windowCount: 0, sideHitCount: 0, hits: [] },
@@ -652,13 +450,21 @@ async function main() {
     }
   }
 
-  const analyzed = analyzeWindows(allWindows, args.includeIncomplete, counters);
+  const analyzed = analyzeWindows(
+    allWindows,
+    args.includeIncomplete,
+    counters,
+    patternConfig.config
+  );
   const warningObj = warnings.toObject();
   const result = {
     config: {
       root,
       dates,
-      includeIncomplete: args.includeIncomplete
+      includeIncomplete: args.includeIncomplete,
+      patternConfigSource: patternConfig.source,
+      patternSetVersion: patternConfig.config.patternSetVersion,
+      patternParamsHash: patternConfig.hash
     },
     counters,
     patterns: {

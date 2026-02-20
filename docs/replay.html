@@ -185,6 +185,34 @@
         border-color: #1864ab;
         background: rgba(24, 100, 171, 0.1);
       }
+      .pattern-wrap {
+        margin-top: 12px;
+        padding: 12px 14px 14px;
+      }
+      .pattern-title {
+        margin: 4px 0 10px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .pattern-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .pattern-btn {
+        height: 34px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--text);
+        padding: 0 12px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .pattern-btn.active {
+        border-color: #2b8a3e;
+        background: rgba(43, 138, 62, 0.12);
+      }
     </style>
   </head>
   <body>
@@ -216,6 +244,11 @@
           <label>状态</label>
           <div id="status" class="chip">初始化中...</div>
         </div>
+      </section>
+
+      <section class="panel pattern-wrap">
+        <h2 class="pattern-title">走势模式筛选（5m）</h2>
+        <div id="patternFilters" class="pattern-filters"></div>
       </section>
 
       <section class="panel intervals-wrap">
@@ -250,12 +283,30 @@
       const statusEl = document.getElementById("status");
       const statsEl = document.getElementById("stats");
       const intervalListEl = document.getElementById("intervalList");
+      const patternFiltersEl = document.getElementById("patternFilters");
       const ptbMetaEl = document.getElementById("ptbMeta");
       const btcContainer = document.getElementById("btcChart");
       const oddsContainer = document.getElementById("oddsChart");
 
+      const PATTERN_META = {
+        all: { label: "全部", short: "ALL" },
+        extremeReversal: { label: "Extreme Reversal", short: "ER" },
+        lateVolatility: { label: "Late Volatility", short: "LV" },
+        peacefulFinish: { label: "Peaceful Finish", short: "PF" }
+      };
+      const PATTERN_ORDER = ["all", "extremeReversal", "lateVolatility", "peacefulFinish"];
+
+      let allIntervals = [];
       let intervals = [];
       let selectedIntervalIndex = -1;
+      let selectedPatternFilter = "all";
+      let patternSummary = {
+        extremeReversal: { windowCount: 0 },
+        lateVolatility: { windowCount: 0 },
+        peacefulFinish: { windowCount: 0 },
+        countedWindows: 0,
+        includeIncomplete: false
+      };
       let btcChart = null;
       let oddsChart = null;
 
@@ -283,6 +334,53 @@
         return `${fmtHm(startMs)} - ${fmtHm(endMs)}`;
       }
 
+      function patternLabel(key) {
+        return PATTERN_META[key]?.label || key;
+      }
+
+      function patternShort(key) {
+        return PATTERN_META[key]?.short || key;
+      }
+
+      function intervalPatternList(interval) {
+        const patterns = Array.isArray(interval?.patterns) ? interval.patterns : [];
+        return patterns;
+      }
+
+      function intervalPatternText(interval) {
+        const patterns = intervalPatternList(interval);
+        if (patterns.length === 0) return "无模式";
+        return patterns.map((x) => patternShort(x)).join("/");
+      }
+
+      function intervalPatternLongText(interval) {
+        const patterns = intervalPatternList(interval);
+        if (patterns.length === 0) return "无模式";
+        return patterns.map((x) => patternLabel(x)).join(", ");
+      }
+
+      function intervalPatternSideText(interval) {
+        const sideHits = interval?.patternSideHits || {};
+        const parts = [];
+        for (const k of ["extremeReversal", "lateVolatility", "peacefulFinish"]) {
+          const rows = Array.isArray(sideHits[k]) ? sideHits[k] : [];
+          if (rows.length === 0) continue;
+          const sides = Array.from(new Set(rows.map((x) => String(x.side || "").toLowerCase()).filter(Boolean)));
+          parts.push(`${patternShort(k)}:${sides.join("/")}`);
+        }
+        return parts.length > 0 ? parts.join(" | ") : "-";
+      }
+
+      function intervalMatchesPattern(interval, patternKey) {
+        if (patternKey === "all") return true;
+        return intervalPatternList(interval).includes(patternKey);
+      }
+
+      function patternCount(patternKey) {
+        if (patternKey === "all") return allIntervals.length;
+        return Number(patternSummary?.[patternKey]?.windowCount || 0);
+      }
+
       function renderStats(items) {
         statsEl.innerHTML = "";
         for (const text of items) {
@@ -300,6 +398,23 @@
           el.className = "chip";
           el.textContent = text;
           ptbMetaEl.appendChild(el);
+        }
+      }
+
+      function renderPatternFilters() {
+        patternFiltersEl.innerHTML = "";
+        for (const key of PATTERN_ORDER) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = `pattern-btn${selectedPatternFilter === key ? " active" : ""}`;
+          btn.textContent = `${patternLabel(key)} (${patternCount(key)})`;
+          btn.addEventListener("click", async () => {
+            if (selectedPatternFilter === key) return;
+            selectedPatternFilter = key;
+            renderPatternFilters();
+            await applyPatternFilterAndRender(true);
+          });
+          patternFiltersEl.appendChild(btn);
         }
       }
 
@@ -617,6 +732,8 @@
         renderStats([
           `区间: ${fmtHmRange(interval.startMs, interval.endMs)}`,
           `市场: ${interval.marketSlug || "-"}`,
+          `走势模式: ${intervalPatternLongText(interval)}`,
+          `模式侧别: ${intervalPatternSideText(interval)}`,
           `开始: ${fmtTime(interval.startMs)}`,
           `结束: ${fmtTime(interval.endMs)}`,
           `BTC 点数: ${btcPoints.length}`,
@@ -670,13 +787,32 @@
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = `interval-item${idx === selectedIntervalIndex ? " active" : ""}`;
-          btn.textContent = fmtHmRange(item.startMs, item.endMs);
-          btn.title = `${item.label}${item.windowId ? ` | ${item.windowId}` : ""}`;
+          btn.textContent = `${fmtHmRange(item.startMs, item.endMs)} | ${intervalPatternText(item)}`;
+          btn.title = `${item.label}${item.windowId ? ` | ${item.windowId}` : ""} | 模式: ${intervalPatternLongText(item)}`
+            + `${intervalPatternSideText(item) !== "-" ? ` | 侧别: ${intervalPatternSideText(item)}` : ""}`;
           btn.addEventListener("click", async () => {
             await chooseInterval(idx);
           });
           intervalListEl.appendChild(btn);
         });
+      }
+
+      async function applyPatternFilterAndRender(autoSelect = true) {
+        intervals = allIntervals.filter((item) => intervalMatchesPattern(item, selectedPatternFilter));
+        selectedIntervalIndex = -1;
+        renderIntervalList();
+        if (intervals.length === 0) {
+          setStatus("当前模式筛选下无可用区间");
+          renderStats([`筛选 ${patternLabel(selectedPatternFilter)} 无区间`]);
+          renderPtbMeta(["PTB 点数: 0", "PTB 方法: -", "最新 PTB: -", "最新 PTB 时间: -"]);
+          return;
+        }
+        if (autoSelect) {
+          const idx = pickDefaultIntervalIndex(intervals);
+          selectedIntervalIndex = idx >= 0 ? idx : intervals.length - 1;
+        }
+        renderIntervalList();
+        await loadSeriesBySelectedInterval();
       }
 
       function pickDefaultIntervalIndex(list) {
@@ -701,21 +837,26 @@
       async function loadIntervals(date, autoSelectLast = true) {
         setStatus("加载区间中...");
         const data = await fetchJson(`/api/intervals?date=${encodeURIComponent(date)}`);
-        intervals = Array.isArray(data.intervals) ? data.intervals : [];
+        allIntervals = Array.isArray(data.intervals) ? data.intervals : [];
+        patternSummary = data?.patternSummary || {
+          extremeReversal: { windowCount: 0 },
+          lateVolatility: { windowCount: 0 },
+          peacefulFinish: { windowCount: 0 },
+          countedWindows: 0,
+          includeIncomplete: false
+        };
+        if (!PATTERN_ORDER.includes(selectedPatternFilter)) selectedPatternFilter = "all";
+        renderPatternFilters();
+        intervals = [];
         selectedIntervalIndex = -1;
         renderIntervalList();
-        if (intervals.length === 0) {
+        if (allIntervals.length === 0) {
           setStatus("当前日期没有可视化交集区间");
           renderStats([`日期 ${date} 无区间`]);
           renderPtbMeta(["PTB 点数: 0", "PTB 方法: -", "最新 PTB: -", "最新 PTB 时间: -"]);
           return;
         }
-        if (autoSelectLast) {
-          const idx = pickDefaultIntervalIndex(intervals);
-          selectedIntervalIndex = idx >= 0 ? idx : intervals.length - 1;
-        }
-        renderIntervalList();
-        await loadSeriesBySelectedInterval();
+        await applyPatternFilterAndRender(autoSelectLast);
       }
 
       async function bootstrap() {

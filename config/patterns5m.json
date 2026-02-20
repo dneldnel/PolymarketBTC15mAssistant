@@ -1,0 +1,26 @@
+{
+  "patternSetVersion": "1",
+  "patterns": {
+    "extremeReversal": {
+      "enabled": true,
+      "params": {
+        "maxPriceThreshold": 0.98,
+        "finalPriceThreshold": 0.01
+      }
+    },
+    "lateVolatility": {
+      "enabled": true,
+      "params": {
+        "highThreshold": 0.8,
+        "lowThreshold": 0.4
+      }
+    },
+    "peacefulFinish": {
+      "enabled": true,
+      "params": {
+        "finalPriceThreshold": 0.99,
+        "maxDrawdownAbsThreshold": 0.1
+      }
+    }
+  }
+}
