@@ -67,7 +67,7 @@
         margin-top: 12px;
         padding: 14px 16px;
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(5, minmax(0, 1fr));
         gap: 10px;
       }
       @media (max-width: 980px) {
@@ -241,6 +241,14 @@
           </select>
         </div>
         <div class="field">
+          <label for="erThresholdSelect">ER 阈值（maxPrice）</label>
+          <select id="erThresholdSelect">
+            <option value="0.98">0.98</option>
+            <option value="0.97">0.97</option>
+            <option value="0.96">0.96</option>
+          </select>
+        </div>
+        <div class="field">
           <label>状态</label>
           <div id="status" class="chip">初始化中...</div>
         </div>
@@ -280,6 +288,7 @@
       const dateSelect = document.getElementById("dateSelect");
       const refreshBtn = document.getElementById("refreshBtn");
       const showDownSelect = document.getElementById("showDownSelect");
+      const erThresholdSelect = document.getElementById("erThresholdSelect");
       const statusEl = document.getElementById("status");
       const statsEl = document.getElementById("stats");
       const intervalListEl = document.getElementById("intervalList");
@@ -306,6 +315,11 @@
         peacefulFinish: { windowCount: 0 },
         countedWindows: 0,
         includeIncomplete: false
+      };
+      let patternConfig = {
+        patternSetVersion: "1",
+        paramsHash: "",
+        extremeReversalMaxPriceThreshold: 0.98
       };
       let btcChart = null;
       let oddsChart = null;
@@ -729,9 +743,13 @@
           `最新 PTB 时间: ${latestPtb ? fmtTime(latestPtb[0]) : "-"}`
         ]);
 
+        const erThresholdText = Number.isFinite(Number(patternConfig?.extremeReversalMaxPriceThreshold))
+          ? Number(patternConfig.extremeReversalMaxPriceThreshold).toFixed(2)
+          : String(erThresholdSelect.value || "-");
         renderStats([
           `区间: ${fmtHmRange(interval.startMs, interval.endMs)}`,
           `市场: ${interval.marketSlug || "-"}`,
+          `ER 阈值: ${erThresholdText}`,
           `走势模式: ${intervalPatternLongText(interval)}`,
           `模式侧别: ${intervalPatternSideText(interval)}`,
           `开始: ${fmtTime(interval.startMs)}`,
@@ -836,7 +854,10 @@
 
       async function loadIntervals(date, autoSelectLast = true) {
         setStatus("加载区间中...");
-        const data = await fetchJson(`/api/intervals?date=${encodeURIComponent(date)}`);
+        const erMaxRaw = String(erThresholdSelect.value || "").trim();
+        const erMax = Number(erMaxRaw);
+        const erMaxParam = Number.isFinite(erMax) ? `&erMax=${encodeURIComponent(erMaxRaw)}` : "";
+        const data = await fetchJson(`/api/intervals?date=${encodeURIComponent(date)}${erMaxParam}`);
         allIntervals = Array.isArray(data.intervals) ? data.intervals : [];
         patternSummary = data?.patternSummary || {
           extremeReversal: { windowCount: 0 },
@@ -844,6 +865,11 @@
           peacefulFinish: { windowCount: 0 },
           countedWindows: 0,
           includeIncomplete: false
+        };
+        patternConfig = data?.patternConfig || {
+          patternSetVersion: "1",
+          paramsHash: "",
+          extremeReversalMaxPriceThreshold: Number.isFinite(erMax) ? erMax : null
         };
         if (!PATTERN_ORDER.includes(selectedPatternFilter)) selectedPatternFilter = "all";
         renderPatternFilters();
@@ -897,6 +923,11 @@
 
       showDownSelect.addEventListener("change", async () => {
         await loadSeriesBySelectedInterval();
+      });
+
+      erThresholdSelect.addEventListener("change", async () => {
+        if (!dateSelect.value) return;
+        await loadIntervals(dateSelect.value, true);
       });
 
       window.addEventListener("resize", () => {

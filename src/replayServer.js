@@ -41,6 +41,7 @@ const PATTERN_CONFIG_CACHE = {
   patternSetVersion: normalizePatternConfig(DEFAULT_PATTERN_CONFIG).patternSetVersion || "1",
   sourcePath: PATTERN_CONFIG_PATH
 };
+const ER_MAX_THRESHOLD_KEYS = ["erMax", "erMaxPriceThreshold"];
 
 function isFiniteNumber(x) {
   const n = typeof x === "string" ? Number(x) : x;
@@ -243,6 +244,41 @@ function resolvePatternConfigState() {
     hash,
     patternSetVersion,
     sourcePath: PATTERN_CONFIG_PATH
+  };
+}
+
+function parseErMaxThresholdParam(searchParams) {
+  let raw = null;
+  for (const key of ER_MAX_THRESHOLD_KEYS) {
+    const candidate = searchParams.get(key);
+    if (candidate === null || candidate === undefined || candidate === "") continue;
+    raw = candidate;
+    break;
+  }
+  if (raw === null) return { value: null, error: null };
+  const parsed = isFiniteNumber(raw);
+  if (parsed === null || parsed < 0 || parsed > 1) {
+    return { value: null, error: "invalid erMax, expected number in [0,1]" };
+  }
+  return { value: Number(parsed), error: null };
+}
+
+function buildPatternConfigState(overrides = null) {
+  const base = resolvePatternConfigState();
+  if (!overrides || typeof overrides !== "object") return base;
+
+  const value = normalizePatternConfig(base.value);
+  if (Number.isFinite(overrides.erMaxThreshold)) {
+    value.patterns.extremeReversal.params.maxPriceThreshold = Number(overrides.erMaxThreshold);
+  }
+  const hash = crypto.createHash("sha256").update(stableStringify(value)).digest("hex");
+  if (hash === base.hash) return base;
+
+  return {
+    value,
+    hash,
+    patternSetVersion: String(value?.patternSetVersion || base.patternSetVersion || "1"),
+    sourcePath: base.sourcePath
   };
 }
 
@@ -737,9 +773,9 @@ async function buildPatternIndexByScan(date, intervals, includeIncomplete, patte
   };
 }
 
-async function buildPatternIndexForDate(date, intervals, includeIncomplete = false) {
+async function buildPatternIndexForDate(date, intervals, includeIncomplete = false, patternConfigStateInput = null) {
   const daySignature = computeDayPatternSignature(date);
-  const patternConfigState = resolvePatternConfigState();
+  const patternConfigState = patternConfigStateInput || resolvePatternConfigState();
   const cacheKey = `${date}|${includeIncomplete ? "1" : "0"}|${patternConfigState.hash}|${daySignature}`;
   const cached = PATTERN_CACHE.get(cacheKey);
   if (cached) return cached;
@@ -867,9 +903,10 @@ async function buildPatternIndexForDate(date, intervals, includeIncomplete = fal
   return value;
 }
 
-async function buildIntervalsWithPatterns(date, includeIncomplete = false) {
+async function buildIntervalsWithPatterns(date, includeIncomplete = false, patternConfigStateInput = null) {
   const intervals = await buildIntervals(date, BUCKET_MS);
-  const patternIndex = await buildPatternIndexForDate(date, intervals, includeIncomplete);
+  const patternConfigState = patternConfigStateInput || resolvePatternConfigState();
+  const patternIndex = await buildPatternIndexForDate(date, intervals, includeIncomplete, patternConfigState);
   const intervalsWithPatterns = intervals.map((interval) => {
     const key = getIntervalPatternKey(interval);
     const patternInfo = patternIndex.byWindowId.get(key) || emptyPatternInfo();
@@ -883,7 +920,14 @@ async function buildIntervalsWithPatterns(date, includeIncomplete = false) {
   return {
     date,
     intervals: intervalsWithPatterns,
-    patternSummary: patternIndex.summary
+    patternSummary: patternIndex.summary,
+    patternConfig: {
+      patternSetVersion: patternConfigState.patternSetVersion,
+      paramsHash: patternConfigState.hash,
+      extremeReversalMaxPriceThreshold: Number(
+        isFiniteNumber(patternConfigState?.value?.patterns?.extremeReversal?.params?.maxPriceThreshold) ?? NaN
+      )
+    }
   };
 }
 
@@ -1075,17 +1119,32 @@ function createReplayServer() {
       if (reqUrl.pathname === "/api/intervals") {
         const requestedDate = String(reqUrl.searchParams.get("date") || "");
         const includeIncomplete = toBoolParam(reqUrl.searchParams.get("includeIncomplete"), false);
+        const erMaxParsed = parseErMaxThresholdParam(reqUrl.searchParams);
+        if (erMaxParsed.error) {
+          writeJson(res, 400, { error: erMaxParsed.error });
+          return;
+        }
+        const patternConfigState = buildPatternConfigState(
+          erMaxParsed.value === null ? null : { erMaxThreshold: erMaxParsed.value }
+        );
         const dates = listDateDirs();
         const date = isDateDirName(requestedDate) ? requestedDate : dates.at(-1);
         if (!date) {
           writeJson(res, 200, {
             date: null,
             intervals: [],
-            patternSummary: buildPatternSummary([], new Map(), includeIncomplete)
+            patternSummary: buildPatternSummary([], new Map(), includeIncomplete),
+            patternConfig: {
+              patternSetVersion: patternConfigState.patternSetVersion,
+              paramsHash: patternConfigState.hash,
+              extremeReversalMaxPriceThreshold: Number(
+                isFiniteNumber(patternConfigState?.value?.patterns?.extremeReversal?.params?.maxPriceThreshold) ?? NaN
+              )
+            }
           });
           return;
         }
-        const payload = await buildIntervalsWithPatterns(date, includeIncomplete);
+        const payload = await buildIntervalsWithPatterns(date, includeIncomplete, patternConfigState);
         writeJson(res, 200, payload);
         return;
       }
