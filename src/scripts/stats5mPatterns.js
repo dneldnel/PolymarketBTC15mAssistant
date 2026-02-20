@@ -102,7 +102,24 @@ function toBtcTimeMs(row) {
 }
 
 function toPrice(row) {
-  return toFiniteNumber(row?.last_trade_price) ?? toFiniteNumber(row?.mid);
+  const lastTradePrice = toFiniteNumber(row?.last_trade_price);
+  const mid = toFiniteNumber(row?.mid);
+  const bestBid = toFiniteNumber(row?.best_bid);
+  const bestAsk = toFiniteNumber(row?.best_ask);
+  const eps = 1e-9;
+
+  // Prefer last_trade_price only when it is consistent with visible BBO.
+  if (lastTradePrice !== null) {
+    if (bestBid !== null && bestAsk !== null) {
+      const low = Math.min(bestBid, bestAsk) - eps;
+      const high = Math.max(bestBid, bestAsk) + eps;
+      if (lastTradePrice >= low && lastTradePrice <= high) return lastTradePrice;
+      return mid ?? null;
+    }
+    return lastTradePrice;
+  }
+
+  return mid;
 }
 
 function floorToBucket(ms, bucketMs) {
